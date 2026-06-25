@@ -78,6 +78,29 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function maxEventTimestampMs(events: NormalizedEvent[], current = 0): number {
+  let latestMs = current;
+  for (const event of events) {
+    const ms = Date.parse(event.timestamp);
+    if (Number.isFinite(ms)) latestMs = Math.max(latestMs, ms);
+  }
+  return latestMs;
+}
+
+function beginSecFromMs(latestMs: number): number {
+  return latestMs > 0 ? Math.floor(latestMs / 1000) : Math.floor(Date.now() / 1000);
+}
+
+function buildForwardPollUrl(
+  path: string,
+  eventExpr: string,
+  beginSec: number,
+  limit: number,
+  baseUrl: string
+): string {
+  return buildMailgunUrl(path, { event: eventExpr, ascending: 'yes', begin: beginSec, limit }, baseUrl);
+}
+
 export function registerEvents(program: Command): void {
   const command = program
     .command('events')
@@ -125,13 +148,10 @@ export function registerEvents(program: Command): void {
         process.stdout.write(`Tailing events for ${domain} - Ctrl+C to stop\n`);
       }
 
-      let stopped = false;
-      const handleSigint = () => {
-        stopped = true;
+      process.once('SIGINT', () => {
         if (opts.json !== true && opts.quiet !== true) process.stdout.write('\nStopped.\n');
         process.exit(0);
-      };
-      process.once('SIGINT', handleSigint);
+      });
 
       // Backlog: fetch the most recent `limit` events (descending) and print them
       // chronologically so new events append naturally below.
@@ -144,24 +164,29 @@ export function registerEvents(program: Command): void {
           dedupe.add(key);
           writeEvent(event, opts);
         }
-        const ms = Date.parse(event.timestamp);
-        if (Number.isFinite(ms)) latestMs = Math.max(latestMs, ms);
+        latestMs = maxEventTimestampMs([event], latestMs);
       }
 
-      // Poll forward: ascending from the newest event seen (or now), advancing the
-      // cursor via paging.next so each poll only surfaces newer events.
-      const beginSec = latestMs > 0 ? Math.floor(latestMs / 1000) : Math.floor(Date.now() / 1000);
-      let pollUrl = buildMailgunUrl(path, { event: eventExpr, ascending: 'yes', begin: beginSec }, runtime.baseUrl);
-      while (!stopped) {
+      // Poll forward: drain each interval's pages via paging.next, then reset the
+      // cursor from the newest timestamp seen so the next cycle does not stick on
+      // an exhausted page URL.
+      let beginSec = beginSecFromMs(latestMs);
+      while (true) {
         await sleep(interval);
-        const page = await fetchEventsPage(pollUrl, apiKey, domain);
-        for (const event of page.events) {
-          const key = tailDedupeKey(event);
-          if (dedupe.has(key)) continue;
-          dedupe.add(key);
-          writeEvent(event, opts);
-        }
-        pollUrl = page.next ?? pollUrl;
+        let pollUrl = buildForwardPollUrl(path, eventExpr, beginSec, limit, runtime.baseUrl);
+        do {
+          const page = await fetchEventsPage(pollUrl, apiKey, domain);
+          for (const event of page.events) {
+            const key = tailDedupeKey(event);
+            if (dedupe.has(key)) continue;
+            dedupe.add(key);
+            writeEvent(event, opts);
+            latestMs = maxEventTimestampMs([event], latestMs);
+          }
+          if (!page.next) break;
+          pollUrl = page.next;
+        } while (true);
+        beginSec = beginSecFromMs(latestMs);
       }
     } catch (error) {
       handleCommandError(error);
