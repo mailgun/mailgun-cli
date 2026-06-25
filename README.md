@@ -1,8 +1,7 @@
 # @mailgun/cli
 
-Agent-first Mailgun CLI. P0 is a read-only proof-of-concept aligned with the
-Mailgun MCP P0 tool set: metrics, address validation, inbox placement, and email
-preview, plus a live `events` stream and machine-readable `agent-context`.
+Agent-first Mailgun CLI for metrics, address validation, inbox placement, and
+email preview, plus a live `events` stream and machine-readable `agent-context`.
 
 ## Install / build (local)
 
@@ -36,10 +35,10 @@ mailgun metrics summary --domain acme.com --json
 mailgun --domain acme.com metrics summary --json
 ```
 
-## P0 commands
+## Commands
 
 ```bash
-# Analytics metrics summary (defaults to a 24h window for MCP parity)
+# Analytics metrics summary (defaults to a 24h window)
 mailgun metrics summary --domain acme.com --json
 mailgun metrics summary --domain acme.com --duration 7d --json
 mailgun metrics summary --domain acme.com --start 2026-06-01T00:00:00Z --end 2026-06-08T00:00:00Z --json
@@ -85,34 +84,9 @@ Exit codes: `0` success (including negative/incomplete upstream outcomes),
 
 ## Product entitlements
 
-Each parity command depends on a Mailgun product (Analytics, Validate, Optimize,
+Each command depends on a Mailgun product (Analytics, Validate, Optimize,
 Inspect). A `403` response is surfaced with capability-focused guidance; your
 plan or API key may not include every product.
-
-`metrics summary` defaults to a `24h` window to match the MCP `get_metrics_summary`
-primitive (older human-oriented demo commands used `7d`).
-
-## Live smoke checklist
-
-Live smoke is a manual release gate, not part of `npm test`. With a real key:
-
-```bash
-MAILGUN_API_KEY=... MAILGUN_API_REGION=us ./dist/index.js metrics summary --domain example.com --json
-MAILGUN_API_KEY=...                        ./dist/index.js validate-email --address user@example.com --json
-MAILGUN_API_KEY=...                        ./dist/index.js inbox-placement list --json
-MAILGUN_API_KEY=...                        ./dist/index.js inbox-placement result --result <result_id> --json
-MAILGUN_API_KEY=...                        ./dist/index.js preview list --json
-MAILGUN_API_KEY=...                        ./dist/index.js preview result --test-id <test_id> --json
-
-# EU, if credentials are available
-MAILGUN_API_KEY=... MAILGUN_API_REGION=eu ./dist/index.js metrics summary --domain example.eu --json
-```
-
-Record entitlement gaps (403s) rather than treating them as build failures. The
-normalizers were verified against the live US API in June 2026; the
-inbox-placement *result* detail shape in particular is not described by the
-OpenAPI spec (empty example) and was derived from live smoke (`{ result: { ...,
-delivery_stats: { <provider>: {...}, all: {...} } } }`).
 
 ## Tests
 
