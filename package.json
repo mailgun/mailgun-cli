@@ -1,0 +1,33 @@
+{
+  "name": "@mailgun/cli",
+  "version": "0.1.0",
+  "description": "Mailgun CLI - agent-first developer surface",
+  "type": "module",
+  "bin": {
+    "mailgun": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x dist/index.js",
+    "test": "node --test \"dist/**/*.test.js\"",
+    "dev": "node --loader ts-node/esm src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "node-fetch": "^3.3.2",
+    "ora": "^8.1.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.3"
+  }
+}
