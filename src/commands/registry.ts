@@ -36,7 +36,7 @@ export const COMMAND_REGISTRY: RegistryCommand[] = [
     category: 'utility',
     mode: 'read',
     description: 'Stream live delivery events',
-    flags: ['--tail', '--filter', '--interval', '--domain', '--region', '--json', '--quiet'],
+    flags: ['--tail', '--filter', '--interval', '--limit', '--domain', '--region', '--json', '--quiet'],
     outputFormat: 'ndjson',
     outputFields: ['timestamp', 'event', 'recipient', 'domain', 'reason', 'code', 'tags'],
     examples: ['mailgun events --domain acme.com --tail', 'mailgun events --domain acme.com --json']

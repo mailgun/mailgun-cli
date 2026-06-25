@@ -19,7 +19,12 @@ const eventsInputSchema = z.object({
   interval: z.coerce
     .number()
     .int('--interval must be a positive integer')
-    .positive('--interval must be a positive integer')
+    .positive('--interval must be a positive integer'),
+  limit: z.coerce
+    .number()
+    .int('--limit must be a positive integer')
+    .positive('--limit must be a positive integer')
+    .max(300, '--limit must be 300 or less')
 });
 
 interface EventsResponse {
@@ -80,9 +85,10 @@ export function registerEvents(program: Command): void {
     .option('--tail', 'enable continuous polling mode')
     .option('--filter <types>', 'comma-separated event types', 'delivered,failed,opened,clicked,complained')
     .option('--interval <ms>', 'polling interval in milliseconds', '3000')
+    .option('--limit <n>', 'recent events to fetch (initial backlog shown before --tail polls)', '10')
     .addHelpText(
       'after',
-      '\nExamples:\n  mailgun events --domain acme.com\n  mailgun events --domain acme.com --json\n  mailgun events --domain acme.com --tail\n'
+      '\nExamples:\n  mailgun events --domain acme.com\n  mailgun events --domain acme.com --json\n  mailgun events --domain acme.com --tail\n  mailgun events --domain acme.com --tail --limit 5 --interval 5000\n'
     );
 
   addApiOptions(command, { domain: true });
@@ -91,22 +97,32 @@ export function registerEvents(program: Command): void {
     const opts = mergedOpts(cmd);
 
     try {
-      const parsed = eventsInputSchema.safeParse({ filter: opts.filter, interval: opts.interval });
+      const parsed = eventsInputSchema.safeParse({ filter: opts.filter, interval: opts.interval, limit: opts.limit });
       if (!parsed.success) {
         throw new UsageError(parsed.error.issues[0]?.message ?? 'invalid input');
       }
-      const { filter, interval } = parsed.data;
+      const { filter, interval, limit } = parsed.data;
 
       const runtime = resolveRuntime(cmd, { requireApiKey: true, requireDomain: true });
+      const apiKey = runtime.apiKey!;
+      const domain = runtime.domain!;
+      const path = `/v3/${encodeURIComponent(domain)}/events`;
+      // Mailgun's events API expects a single `event` filter expression with
+      // types joined by OR; repeated `event` params match nothing.
+      const eventExpr = filter.join(' OR ');
       const dedupe = new Set<string>();
-      let nextUrl = buildMailgunUrl(
-        `/v3/${encodeURIComponent(runtime.domain!)}/events`,
-        { event: filter, limit: 10, ascending: 'no' },
-        runtime.baseUrl
-      );
 
-      if (opts.tail === true && opts.json !== true && opts.quiet !== true) {
-        process.stdout.write(`Tailing events for ${runtime.domain} - Ctrl+C to stop\n`);
+      // Single fetch: most recent `limit` events, newest first (descending).
+      if (opts.tail !== true) {
+        const url = buildMailgunUrl(path, { event: eventExpr, limit, ascending: 'no' }, runtime.baseUrl);
+        const page = await fetchEventsPage(url, apiKey, domain);
+        for (const event of page.events) writeEvent(event, opts);
+        return;
+      }
+
+      // Tail: show a recent backlog, then poll forward for new events.
+      if (opts.json !== true && opts.quiet !== true) {
+        process.stdout.write(`Tailing events for ${domain} - Ctrl+C to stop\n`);
       }
 
       let stopped = false;
@@ -115,22 +131,37 @@ export function registerEvents(program: Command): void {
         if (opts.json !== true && opts.quiet !== true) process.stdout.write('\nStopped.\n');
         process.exit(0);
       };
+      process.once('SIGINT', handleSigint);
 
-      if (opts.tail === true) process.once('SIGINT', handleSigint);
+      // Backlog: fetch the most recent `limit` events (descending) and print them
+      // chronologically so new events append naturally below.
+      const backlogUrl = buildMailgunUrl(path, { event: eventExpr, limit, ascending: 'no' }, runtime.baseUrl);
+      const backlog = await fetchEventsPage(backlogUrl, apiKey, domain);
+      let latestMs = 0;
+      for (const event of [...backlog.events].reverse()) {
+        const key = tailDedupeKey(event);
+        if (!dedupe.has(key)) {
+          dedupe.add(key);
+          writeEvent(event, opts);
+        }
+        const ms = Date.parse(event.timestamp);
+        if (Number.isFinite(ms)) latestMs = Math.max(latestMs, ms);
+      }
 
+      // Poll forward: ascending from the newest event seen (or now), advancing the
+      // cursor via paging.next so each poll only surfaces newer events.
+      const beginSec = latestMs > 0 ? Math.floor(latestMs / 1000) : Math.floor(Date.now() / 1000);
+      let pollUrl = buildMailgunUrl(path, { event: eventExpr, ascending: 'yes', begin: beginSec }, runtime.baseUrl);
       while (!stopped) {
-        const currentPage = await fetchEventsPage(nextUrl, runtime.apiKey!, runtime.domain!);
-
-        for (const event of currentPage.events) {
+        await sleep(interval);
+        const page = await fetchEventsPage(pollUrl, apiKey, domain);
+        for (const event of page.events) {
           const key = tailDedupeKey(event);
           if (dedupe.has(key)) continue;
           dedupe.add(key);
           writeEvent(event, opts);
         }
-
-        if (opts.tail !== true) break;
-        nextUrl = currentPage.next ?? nextUrl;
-        await sleep(interval);
+        pollUrl = page.next ?? pollUrl;
       }
     } catch (error) {
       handleCommandError(error);

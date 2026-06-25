@@ -63,6 +63,9 @@ mailgun preview result --test-id preview_123 --json
 # Live delivery event stream (single fetch or --tail)
 mailgun events --domain acme.com --json
 mailgun events --domain acme.com --tail
+# --tail shows the most recent --limit events (default 10) as a backlog, then
+# polls forward (every --interval ms) for new events only
+mailgun events --domain acme.com --tail --limit 5 --interval 5000
 
 # Machine-readable schema of the curated command surface
 mailgun agent-context | jq '.commands | keys'
@@ -106,8 +109,10 @@ MAILGUN_API_KEY=... MAILGUN_API_REGION=eu ./dist/index.js metrics summary --doma
 ```
 
 Record entitlement gaps (403s) rather than treating them as build failures. The
-inbox-placement *result* detail shape ships with an empty OpenAPI example; live
-smoke confirms its provider/placement fields.
+normalizers were verified against the live US API in June 2026; the
+inbox-placement *result* detail shape in particular is not described by the
+OpenAPI spec (empty example) and was derived from live smoke (`{ result: { ...,
+delivery_stats: { <provider>: {...}, all: {...} } } }`).
 
 ## Tests
 
