@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startMockServer, runCli } from './mock-server.js';
 import { METRICS_POPULATED } from '../fixtures/analytics.js';
+import { USER_AGENT } from '../lib/version.js';
 
 test('metrics summary success path: POST body, basic auth, region host', async () => {
   const server = await startMockServer([
@@ -24,6 +25,7 @@ test('metrics summary success path: POST body, basic auth, region host', async (
     assert.equal(req.method, 'POST');
     assert.equal(req.path, '/v1/analytics/metrics');
     assert.match(String(req.headers.authorization), /^Basic /);
+    assert.equal(req.headers['user-agent'], USER_AGENT);
     const body = JSON.parse(req.body);
     assert.equal(body.include_aggregates, true);
     assert.equal(body.filter.AND[0].values[0].value, 'acme.com');

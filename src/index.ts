@@ -6,6 +6,7 @@ import { registerMetrics } from './commands/metrics.js';
 import { registerValidateEmail } from './commands/validate-email.js';
 import { registerInboxPlacement } from './commands/inbox-placement.js';
 import { registerPreview } from './commands/preview.js';
+import { CLI_VERSION } from './lib/version.js';
 
 const program = new Command();
 
@@ -17,7 +18,7 @@ process.stdout.on('error', (error: NodeJS.ErrnoException) => {
 program
   .name('mailgun')
   .description('Mailgun CLI - agent-first developer surface')
-  .version('0.1.0')
+  .version(CLI_VERSION)
   // Parent-level mirrors of the shared API flags so the pre-subcommand form
   // works too: `mailgun --domain acme.com metrics summary --json`.
   .option('--json', 'output as machine-readable JSON')

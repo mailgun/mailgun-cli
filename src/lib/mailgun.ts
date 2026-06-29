@@ -1,6 +1,7 @@
 import fetch from 'node-fetch';
 import { CliError } from './output.js';
 import type { ProductLabel } from './types.js';
+import { USER_AGENT } from './version.js';
 
 export type Region = 'us' | 'eu';
 
@@ -75,6 +76,7 @@ export async function mailgunRequest<T>(
       method,
       headers: {
         Authorization: authHeader(apiKey),
+        'User-Agent': USER_AGENT,
         Accept: 'application/json',
         ...(body !== undefined ? { 'Content-Type': 'application/json' } : {})
       },

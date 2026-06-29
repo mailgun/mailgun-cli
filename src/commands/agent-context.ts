@@ -1,8 +1,7 @@
 import { Command } from 'commander';
 import { printJSON } from '../lib/output.js';
+import { CLI_NAME, CLI_VERSION } from '../lib/version.js';
 import { COMMAND_REGISTRY, type RegistryCommand } from './registry.js';
-
-const CLI_VERSION = '0.1.0';
 
 function serializeCommand(entry: RegistryCommand): Record<string, unknown> {
   const serialized: Record<string, unknown> = {
@@ -28,7 +27,7 @@ export function buildAgentContext(): Record<string, unknown> {
   return {
     schema_version: '1.0',
     cli_version: CLI_VERSION,
-    name: '@mailgun/cli',
+    name: CLI_NAME,
     description: 'Agent-first Mailgun CLI - curated workflows for diagnostics and observability',
     auth: {
       method: 'env_var',

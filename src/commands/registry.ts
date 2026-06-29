@@ -3,8 +3,7 @@ import type { ProductLabel } from '../lib/types.js';
 // Curated registry of durable PRODUCTION CLI commands. This represents the
 // supported CLI surface, not the set of Mailgun API endpoints. `agent-context`
 // is serialized directly from this registry, so adding a production command
-// means adding it here. Retired workshop demo commands (health, investigate)
-// are intentionally absent.
+// means adding it here. 
 
 export type CommandCategory = 'introspection' | 'utility' | 'parity';
 
