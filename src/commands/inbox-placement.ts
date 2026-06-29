@@ -78,7 +78,7 @@ function registerList(parent: Command): void {
         },
         runtime.baseUrl
       );
-      const response = await mailgunRequest<unknown>(url, runtime.apiKey!, 'inbox placement results', { product: 'Optimize' });
+      const response = await mailgunRequest<unknown>(url, runtime.apiKey!, 'inbox placement results');
       spinner.stop();
 
       const output = normalizeInboxList(response);
@@ -123,7 +123,7 @@ function registerResult(parent: Command): void {
         { provider: opts.provider as string | undefined },
         runtime.baseUrl
       );
-      const response = await mailgunRequest<unknown>(url, runtime.apiKey!, 'inbox placement result', { product: 'Optimize' });
+      const response = await mailgunRequest<unknown>(url, runtime.apiKey!, 'inbox placement result');
       spinner.stop();
 
       const output = normalizeInboxResult(resultId, response);

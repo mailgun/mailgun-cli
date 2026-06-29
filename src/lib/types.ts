@@ -1,8 +1,9 @@
 // Shared cross-command types for the P0 parity surface.
 
 // Product labels map a command to the Mailgun product entitlement it depends on.
-// Used to produce capability-focused 403 guidance in error output.
-export type ProductLabel = 'Validate' | 'Optimize' | 'Inspect' | 'Analytics';
+// When a command wraps one API endpoint, use the source OpenAPI spec as the
+// product boundary. Used to produce capability-focused 403 guidance in errors.
+export type ProductLabel = 'Send' | 'Optimize' | 'Validate' | 'Inspect';
 
 // Structured data gap. Emitted when missing upstream data materially affects
 // interpretation of a result. `impact` is factual and capability-focused only -

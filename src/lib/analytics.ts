@@ -1,8 +1,8 @@
 import type { DataGap } from './types.js';
 
-// Normalize an upstream window bound to an ISO 8601 string. The Analytics API
-// returns RFC1123-style dates (e.g. "Wed, 24 Jun 2026 00:00:00 +0000"); the CLI
-// presents ISO for consistency. Unparseable or missing values become null.
+// Normalize an upstream window bound to an ISO 8601 string. The Send metrics
+// endpoint returns RFC1123-style dates (e.g. "Wed, 24 Jun 2026 00:00:00 +0000");
+// the CLI presents ISO for consistency. Unparseable or missing values become null.
 function normalizeWindowBound(value: string | undefined): string | null {
   if (typeof value !== 'string' || value.length === 0) return null;
   const parsed = Date.parse(value);
@@ -40,7 +40,7 @@ export interface MetricsSummary {
   window: { start: string | null; end: string | null };
 }
 
-export interface AnalyticsMetricsResponse {
+export interface SendMetricsResponse {
   start?: string;
   end?: string;
   aggregates?: {
@@ -92,7 +92,7 @@ function getCount(metrics: Record<string, unknown>, key: string): number | undef
 function metricGap(key: string): DataGap {
   return {
     code: 'metric_unavailable',
-    product: 'Analytics',
+    product: 'Send',
     message: `Metric ${key} was not returned for this window.`,
     impact: 'Rates that depend on this metric were omitted.'
   };
@@ -100,12 +100,12 @@ function metricGap(key: string): DataGap {
 
 const NO_SEND_GAP: DataGap = {
   code: 'no_send_in_window',
-  product: 'Analytics',
+  product: 'Send',
   message: 'No messages were sent in this window.',
   impact: 'Rates cannot be computed without a positive sent count.'
 };
 
-export function buildMetricsSummary(domain: string, data: AnalyticsMetricsResponse): MetricsSummary {
+export function buildMetricsSummary(domain: string, data: SendMetricsResponse): MetricsSummary {
   const aggregates = data.aggregates?.metrics ?? {};
   const dataGaps: DataGap[] = [];
   const metricsRaw: Record<string, number> = {};

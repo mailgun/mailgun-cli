@@ -1,6 +1,5 @@
 import fetch from 'node-fetch';
 import { CliError } from './output.js';
-import type { ProductLabel } from './types.js';
 import { USER_AGENT } from './version.js';
 
 export type Region = 'us' | 'eu';
@@ -49,18 +48,9 @@ export function truncateBody(text: string, maxLength = 500): string {
   return text.length <= maxLength ? text : `${text.slice(0, maxLength)}...`;
 }
 
-// Capability-focused guidance for 403 responses, keyed by product entitlement.
-const FORBIDDEN_GUIDANCE: Record<ProductLabel, string> = {
-  Validate: 'your plan or API key may not include Validate',
-  Optimize: 'your account may not include Inbox Placement',
-  Inspect: 'your account may not include Email Preview/Inspect',
-  Analytics: 'your API key may not have access to analytics metrics'
-};
-
 export interface MailgunRequestOptions {
   method?: 'GET' | 'POST';
   body?: unknown;
-  product?: ProductLabel;
 }
 
 export async function mailgunRequest<T>(
@@ -69,7 +59,7 @@ export async function mailgunRequest<T>(
   operation: string,
   options: MailgunRequestOptions = {}
 ): Promise<T> {
-  const { method = 'GET', body, product } = options;
+  const { method = 'GET', body } = options;
   let response;
   try {
     response = await fetch(url, {
@@ -91,11 +81,12 @@ export async function mailgunRequest<T>(
     if (response.status === 401) {
       throw new CliError('Mailgun API returned 401 - check your MAILGUN_API_KEY');
     }
-    if (response.status === 403 && product) {
-      throw new CliError(`Mailgun API returned 403 - ${FORBIDDEN_GUIDANCE[product]}`);
-    }
     const text = await response.text().catch(() => '');
     const safeBody = truncateBody(redact(text, apiKey));
+    if (response.status === 403) {
+      const apiResponse = safeBody.length > 0 ? safeBody : 'Forbidden';
+      throw new CliError(`Mailgun API returned 403 for ${operation}: ${apiResponse}`);
+    }
     throw new CliError(`Mailgun API returned ${response.status}: ${safeBody}`);
   }
 

@@ -3,7 +3,8 @@ import type { ProductLabel } from '../lib/types.js';
 // Curated registry of durable PRODUCTION CLI commands. This represents the
 // supported CLI surface, not the set of Mailgun API endpoints. `agent-context`
 // is serialized directly from this registry, so adding a production command
-// means adding it here. 
+// means adding it here. Product labels should follow the source OpenAPI spec
+// boundary when a command wraps a single product API.
 
 export type CommandCategory = 'introspection' | 'utility' | 'parity';
 
@@ -35,6 +36,7 @@ export const COMMAND_REGISTRY: RegistryCommand[] = [
     category: 'utility',
     mode: 'read',
     description: 'Stream live delivery events',
+    product: 'Send',
     flags: ['--tail', '--filter', '--interval', '--limit', '--domain', '--region', '--json', '--quiet'],
     outputFormat: 'ndjson',
     outputFields: ['timestamp', 'event', 'recipient', 'domain', 'reason', 'code', 'tags'],
@@ -45,7 +47,7 @@ export const COMMAND_REGISTRY: RegistryCommand[] = [
     category: 'parity',
     mode: 'read',
     description: 'Summarize sending metrics (counts and computed rates) for a domain and window',
-    product: 'Analytics',
+    product: 'Send',
     mcpTool: 'get_metrics_summary',
     flags: ['--domain', '--window', '--duration', '--start', '--end', '--timezone', '--region', '--json', '--quiet'],
     outputFields: ['domain', 'metrics_raw', 'rates', 'data_gaps', 'window'],

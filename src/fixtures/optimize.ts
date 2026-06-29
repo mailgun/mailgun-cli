@@ -73,5 +73,5 @@ export const INBOX_RESULT_PROCESSING = {
   }
 };
 
-// Capability error body for a 403 (account lacks Inbox Placement).
+// Capability error body for a 403 (account lacks the inbox placement feature).
 export const INBOX_403 = { message: 'Inbox Placement is not enabled for this account' };

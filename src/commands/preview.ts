@@ -82,7 +82,7 @@ function registerList(parent: Command): void {
         },
         runtime.baseUrl
       );
-      const response = await mailgunRequest<unknown>(url, runtime.apiKey!, 'preview tests', { product: 'Inspect' });
+      const response = await mailgunRequest<unknown>(url, runtime.apiKey!, 'preview tests');
       spinner.stop();
 
       const output = normalizePreviewList(response);
@@ -122,7 +122,7 @@ function registerResult(parent: Command): void {
 
       spinner.start('Fetching preview result...');
       const url = buildMailgunUrl(`/v2/preview/tests/${encodeURIComponent(testId)}`, undefined, runtime.baseUrl);
-      const response = await mailgunRequest<unknown>(url, runtime.apiKey!, 'preview result', { product: 'Inspect' });
+      const response = await mailgunRequest<unknown>(url, runtime.apiKey!, 'preview result');
       spinner.stop();
 
       const output = normalizePreviewResult(testId, response);

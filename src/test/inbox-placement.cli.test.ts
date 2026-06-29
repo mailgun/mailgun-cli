@@ -97,12 +97,13 @@ test('inbox-placement result missing id exits 2 with actionable message', async 
   assert.match(result.stderr, /a result id is required/);
 });
 
-test('inbox-placement 403 surfaces Optimize guidance', async () => {
+test('inbox-placement 403 surfaces API response', async () => {
   const server = await startMockServer([{ method: 'GET', path: '/v4/inbox/results', status: 403, json: INBOX_403 }]);
   try {
     const result = await runCli(['inbox-placement', 'list', '--json'], { MAILGUN_API_KEY: 'k' }, server.baseUrl);
     assert.equal(result.code, 1);
-    assert.match(result.stderr, /403 - your account may not include Inbox Placement/);
+    assert.match(result.stderr, /403 for inbox placement results/);
+    assert.match(result.stderr, /Inbox Placement is not enabled/);
   } finally {
     await server.close();
   }

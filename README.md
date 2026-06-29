@@ -38,7 +38,7 @@ mailgun --domain acme.com metrics summary --json
 ## Commands
 
 ```bash
-# Analytics metrics summary (defaults to a 24h window)
+# Send metrics summary (defaults to a 24h window)
 mailgun metrics summary --domain acme.com --json
 mailgun metrics summary --domain acme.com --duration 7d --json
 mailgun metrics summary --domain acme.com --start 2026-06-01T00:00:00Z --end 2026-06-08T00:00:00Z --json
@@ -84,9 +84,12 @@ Exit codes: `0` success (including negative/incomplete upstream outcomes),
 
 ## Product entitlements
 
-Each command depends on a Mailgun product (Analytics, Validate, Optimize,
-Inspect). A `403` response is surfaced with capability-focused guidance; your
-plan or API key may not include every product.
+Each command depends on one of Mailgun's core products: Send, Optimize,
+Validate, or Inspect. When a command wraps a specific API endpoint, its product
+label follows the OpenAPI spec that defines that endpoint. Product labels are
+used for discovery and agent context; product availability is determined by the
+Mailgun API response at call time. A `403` response includes the API response
+body rather than a CLI-authored entitlement claim.
 
 ## Tests
 

@@ -78,12 +78,13 @@ test('preview result missing id exits 2 with actionable message', async () => {
   assert.match(result.stderr, /a test id is required/);
 });
 
-test('preview 403 surfaces Inspect guidance', async () => {
+test('preview 403 surfaces API response', async () => {
   const server = await startMockServer([{ method: 'GET', path: '/v2/preview/tests', status: 403, json: PREVIEW_403 }]);
   try {
     const result = await runCli(['preview', 'list', '--json'], { MAILGUN_API_KEY: 'k' }, server.baseUrl);
     assert.equal(result.code, 1);
-    assert.match(result.stderr, /403 - your account may not include Email Preview\/Inspect/);
+    assert.match(result.stderr, /403 for preview tests/);
+    assert.match(result.stderr, /Email Preview is not enabled/);
   } finally {
     await server.close();
   }

@@ -62,5 +62,5 @@ export const PREVIEW_RESULT_PROCESSING = {
   content_checking: {}
 };
 
-// Capability error body for a 403 (account lacks Email Preview/Inspect).
+// Capability error body for a 403 (account lacks the email preview feature).
 export const PREVIEW_403 = { message: 'Email Preview is not enabled for this account' };

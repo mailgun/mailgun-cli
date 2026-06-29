@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { z } from 'zod';
 import { mergedOpts, resolveRuntime } from '../lib/runtime.js';
-import { buildMailgunUrl, fetchMailgunJSON } from '../lib/mailgun.js';
+import { buildMailgunUrl, mailgunRequest } from '../lib/mailgun.js';
 import { eventSymbol, formatEventTime, normalizeEvent, tailDedupeKey, type NormalizedEvent } from '../lib/events.js';
 import { addApiOptions } from './shared-options.js';
 import { chalkFor, handleCommandError, pad, truncate, UsageError } from '../lib/output.js';
@@ -67,7 +67,7 @@ function writeEvent(event: NormalizedEvent, opts: { json?: boolean; quiet?: bool
 }
 
 async function fetchEventsPage(url: string, apiKey: string, domain: string): Promise<{ events: NormalizedEvent[]; next?: string }> {
-  const response = await fetchMailgunJSON<EventsResponse>(url, apiKey, 'events');
+  const response = await mailgunRequest<EventsResponse>(url, apiKey, 'events');
   return {
     events: (response.items ?? []).map((event) => normalizeEvent(event, domain)),
     next: response.paging?.next

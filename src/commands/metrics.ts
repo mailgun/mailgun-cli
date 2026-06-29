@@ -5,7 +5,7 @@ import { buildMailgunUrl, mailgunRequest } from '../lib/mailgun.js';
 import {
   buildMetricsRequestBody,
   buildMetricsSummary,
-  type AnalyticsMetricsResponse,
+  type SendMetricsResponse,
   type MetricsSummary
 } from '../lib/analytics.js';
 import { addApiOptions } from './shared-options.js';
@@ -107,10 +107,9 @@ export function registerMetrics(program: Command): void {
       spinner.start('Fetching metrics...');
       const url = buildMailgunUrl('/v1/analytics/metrics', undefined, runtime.baseUrl);
       const body = buildMetricsRequestBody({ domain: runtime.domain!, ...input });
-      const response = await mailgunRequest<AnalyticsMetricsResponse>(url, runtime.apiKey!, 'metrics', {
+      const response = await mailgunRequest<SendMetricsResponse>(url, runtime.apiKey!, 'metrics', {
         method: 'POST',
-        body,
-        product: 'Analytics'
+        body
       });
       spinner.stop();
 

@@ -194,6 +194,19 @@ test('events invalid --filter exits 2', async () => {
   assert.match(result.stderr, /--filter must contain only/);
 });
 
+test('events 403 surfaces API response', async () => {
+  const server = await startMockServer([{ method: 'GET', path: '/v3/', status: 403, json: { message: 'forbidden' } }]);
+  try {
+    const result = await runCli(['events', '--domain', 'acme.com', '--json'], { MAILGUN_API_KEY: 'k' }, server.baseUrl);
+    assert.equal(result.code, 1);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /403 for events/);
+    assert.match(result.stderr, /"message":"forbidden"/);
+  } finally {
+    await server.close();
+  }
+});
+
 test('agent-context lists all production commands and excludes retired health/investigate', async () => {
   const result = await runCli(['agent-context']);
   assert.equal(result.code, 0);
@@ -205,6 +218,8 @@ test('agent-context lists all production commands and excludes retired health/in
   );
   assert.ok(!keys.includes('health'));
   assert.ok(!keys.includes('investigate'));
+  assert.equal(ctx.commands.events.product, 'Send');
+  assert.equal(ctx.commands['metrics summary'].product, 'Send');
   assert.equal(ctx.commands['metrics summary'].mcp_tool, 'get_metrics_summary');
 });
 

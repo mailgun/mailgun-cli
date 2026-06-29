@@ -52,7 +52,7 @@ test('summary flags no_send_in_window and omits rates when sent is zero', () => 
   assert.deepEqual(summary.rates, {});
   assert.equal(summary.data_gaps.length, 1);
   assert.equal(summary.data_gaps[0]!.code, 'no_send_in_window');
-  assert.equal(summary.data_gaps[0]!.product, 'Analytics');
+  assert.equal(summary.data_gaps[0]!.product, 'Send');
 });
 
 test('summary adds metric_unavailable gap and omits dependent rate when a metric is missing', () => {

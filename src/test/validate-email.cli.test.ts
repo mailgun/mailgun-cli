@@ -62,12 +62,13 @@ test('validate-email bad provider-lookup exits 2', async () => {
   assert.match(result.stderr, /--provider-lookup requires an explicit true or false/);
 });
 
-test('validate-email 403 surfaces Validate guidance', async () => {
+test('validate-email 403 surfaces API response', async () => {
   const server = await startMockServer([{ method: 'GET', path: '/v4/address/validate', status: 403, json: { message: 'no' } }]);
   try {
     const result = await runCli(['validate-email', 'a@b.com', '--json'], { MAILGUN_API_KEY: 'k' }, server.baseUrl);
     assert.equal(result.code, 1);
-    assert.match(result.stderr, /403 - your plan or API key may not include Validate/);
+    assert.match(result.stderr, /403 for address validation/);
+    assert.match(result.stderr, /"message":"no"/);
   } finally {
     await server.close();
   }

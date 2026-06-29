@@ -63,7 +63,7 @@ test('metrics summary missing domain exits 2', async () => {
   assert.match(result.stderr, /--domain is required/);
 });
 
-test('metrics summary surfaces Analytics 403 guidance, exit 1', async () => {
+test('metrics summary surfaces API 403 response, exit 1', async () => {
   const server = await startMockServer([
     { method: 'POST', path: '/v1/analytics/metrics', status: 403, json: { message: 'forbidden' } }
   ]);
@@ -71,7 +71,8 @@ test('metrics summary surfaces Analytics 403 guidance, exit 1', async () => {
     const result = await runCli(['metrics', 'summary', '--domain', 'acme.com', '--json'], { MAILGUN_API_KEY: 'k' }, server.baseUrl);
     assert.equal(result.code, 1);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /403 - your API key may not have access to analytics metrics/);
+    assert.match(result.stderr, /403 for metrics/);
+    assert.match(result.stderr, /"message":"forbidden"/);
   } finally {
     await server.close();
   }

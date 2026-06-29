@@ -59,9 +59,7 @@ export function registerValidateEmail(program: Command): void {
 
       spinner.start('Validating address...');
       const url = buildMailgunUrl('/v4/address/validate', buildValidateQuery({ address, providerLookup }), runtime.baseUrl);
-      const response = await mailgunRequest<ValidateApiResponse>(url, runtime.apiKey!, 'address validation', {
-        product: 'Validate'
-      });
+      const response = await mailgunRequest<ValidateApiResponse>(url, runtime.apiKey!, 'address validation');
       spinner.stop();
 
       const result = normalizeValidation(address, response);
