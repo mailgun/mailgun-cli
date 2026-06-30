@@ -5,7 +5,6 @@ import { COMMAND_REGISTRY, type RegistryCommand } from './registry.js';
 
 function serializeCommand(entry: RegistryCommand): Record<string, unknown> {
   const serialized: Record<string, unknown> = {
-    category: entry.category,
     mode: entry.mode,
     description: entry.description
   };

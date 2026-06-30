@@ -6,11 +6,8 @@ import type { ProductLabel } from '../lib/core/types.js';
 // means adding it here. Product labels should follow the source OpenAPI spec
 // boundary when a command wraps a single product API.
 
-export type CommandCategory = 'introspection' | 'utility' | 'parity';
-
 export interface RegistryCommand {
   command: string;
-  category: CommandCategory;
   mode: 'read';
   description: string;
   product?: ProductLabel;
@@ -24,7 +21,6 @@ export interface RegistryCommand {
 export const COMMAND_REGISTRY: RegistryCommand[] = [
   {
     command: 'agent-context',
-    category: 'introspection',
     mode: 'read',
     description: 'Return machine-readable CLI schema for agent introspection',
     flags: [],
@@ -33,7 +29,6 @@ export const COMMAND_REGISTRY: RegistryCommand[] = [
   },
   {
     command: 'events',
-    category: 'utility',
     mode: 'read',
     description: 'Stream live delivery events',
     product: 'Send',
@@ -44,7 +39,6 @@ export const COMMAND_REGISTRY: RegistryCommand[] = [
   },
   {
     command: 'metrics summary',
-    category: 'parity',
     mode: 'read',
     description: 'Summarize sending metrics (counts and computed rates) for a domain and window',
     product: 'Send',
@@ -58,7 +52,6 @@ export const COMMAND_REGISTRY: RegistryCommand[] = [
   },
   {
     command: 'validate-email',
-    category: 'parity',
     mode: 'read',
     description: 'Validate a single email address',
     product: 'Validate',
@@ -82,7 +75,6 @@ export const COMMAND_REGISTRY: RegistryCommand[] = [
   },
   {
     command: 'inbox-placement list',
-    category: 'parity',
     mode: 'read',
     description: 'List recent inbox placement result IDs',
     product: 'Optimize',
@@ -95,7 +87,6 @@ export const COMMAND_REGISTRY: RegistryCommand[] = [
   },
   {
     command: 'inbox-placement result',
-    category: 'parity',
     mode: 'read',
     description: 'Retrieve and summarize an inbox placement result',
     product: 'Optimize',
@@ -109,7 +100,6 @@ export const COMMAND_REGISTRY: RegistryCommand[] = [
   },
   {
     command: 'preview list',
-    category: 'parity',
     mode: 'read',
     description: 'List recent email preview test IDs',
     product: 'Inspect',
@@ -122,7 +112,6 @@ export const COMMAND_REGISTRY: RegistryCommand[] = [
   },
   {
     command: 'preview result',
-    category: 'parity',
     mode: 'read',
     description: 'Retrieve and summarize an email preview result',
     product: 'Inspect',
