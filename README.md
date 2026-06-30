@@ -100,3 +100,7 @@ npm run build && npm test
 Tests use Node's built-in runner: pure unit tests for request builders,
 normalizers, and validation; mocked subprocess tests that intercept the API via a
 local server. No live credentials are required for the automated suite.
+
+## Project layout
+
+Library code lives under `src/lib/` in layers (`core/`, `cli/`, `products/`). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the module map and planned P1/P2 growth.
