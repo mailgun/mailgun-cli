@@ -1,4 +1,5 @@
-import type { DataGap } from './types.js';
+import type { DataGap } from '../../core/types.js';
+import { buildMailgunUrl, mailgunRequest } from '../../core/mailgun.js';
 
 // Optimize Inbox Placement normalizers, verified against the live v4 API:
 //   - GET /v4/inbox/results        -> { items: [ <result> ], paging, total }
@@ -65,6 +66,28 @@ export interface InboxListOutput {
   data_gaps: DataGap[];
 }
 
+export async function listInboxPlacementResults(params: {
+  apiKey: string;
+  baseUrl: string;
+  limit: number;
+  subject?: string;
+  sender?: string;
+  provider?: string;
+}): Promise<InboxListOutput> {
+  const url = buildMailgunUrl(
+    '/v4/inbox/results',
+    {
+      limit: params.limit,
+      subject: params.subject,
+      sender: params.sender,
+      provider: params.provider
+    },
+    params.baseUrl
+  );
+  const response = await mailgunRequest<unknown>(url, params.apiKey, 'inbox placement results');
+  return normalizeInboxList(response);
+}
+
 function summarizeListItem(item: unknown): InboxResultSummary {
   const record = asRecord(item);
   return {
@@ -116,6 +139,21 @@ export interface InboxResultOutput {
   providers: ProviderPlacement[];
   spamassassin: SpamAssassinSummary | null;
   data_gaps: DataGap[];
+}
+
+export async function getInboxPlacementResult(params: {
+  apiKey: string;
+  baseUrl: string;
+  resultId: string;
+  provider?: string;
+}): Promise<InboxResultOutput> {
+  const url = buildMailgunUrl(
+    `/v4/inbox/results/${encodeURIComponent(params.resultId)}`,
+    { provider: params.provider },
+    params.baseUrl
+  );
+  const response = await mailgunRequest<unknown>(url, params.apiKey, 'inbox placement result');
+  return normalizeInboxResult(params.resultId, response);
 }
 
 function counts(stats: Record<string, unknown>): { inbox: number; spam: number; missing: number; pending: number } {

@@ -1,4 +1,5 @@
-import type { DataGap } from './types.js';
+import type { DataGap } from '../../core/types.js';
+import { buildMailgunUrl, mailgunRequest } from '../../core/mailgun.js';
 
 // Normalize an upstream window bound to an ISO 8601 string. The Send metrics
 // endpoint returns RFC1123-style dates (e.g. "Wed, 24 Jun 2026 00:00:00 +0000");
@@ -46,6 +47,16 @@ export interface SendMetricsResponse {
   aggregates?: {
     metrics?: Record<string, unknown>;
   };
+}
+
+export async function getMetricsSummary(params: MetricsRequestParams & { apiKey: string; baseUrl: string }): Promise<MetricsSummary> {
+  const url = buildMailgunUrl('/v1/analytics/metrics', undefined, params.baseUrl);
+  const body = buildMetricsRequestBody(params);
+  const response = await mailgunRequest<SendMetricsResponse>(url, params.apiKey, 'metrics', {
+    method: 'POST',
+    body
+  });
+  return buildMetricsSummary(params.domain, response);
 }
 
 export function buildMetricsRequestBody(params: MetricsRequestParams): Record<string, unknown> {

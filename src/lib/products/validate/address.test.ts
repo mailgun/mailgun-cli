@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildValidateQuery, normalizeValidation, resolveAddress } from './validate.js';
-import { UsageError } from './output.js';
-import { VALIDATE_DELIVERABLE_TYPO, VALIDATE_MINIMAL, VALIDATE_UNDELIVERABLE } from '../fixtures/validate.js';
+import { buildValidateQuery, normalizeValidation, resolveAddress } from './address.js';
+import { UsageError } from '../../cli/output.js';
+import { VALIDATE_DELIVERABLE_TYPO, VALIDATE_MINIMAL, VALIDATE_UNDELIVERABLE } from '../../../fixtures/validate.js';
 
 test('resolveAddress prefers --address when equal to positional', () => {
   assert.equal(resolveAddress('a@b.com', 'a@b.com'), 'a@b.com');

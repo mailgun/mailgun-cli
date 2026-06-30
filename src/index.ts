@@ -6,7 +6,7 @@ import { registerMetrics } from './commands/metrics.js';
 import { registerValidateEmail } from './commands/validate-email.js';
 import { registerInboxPlacement } from './commands/inbox-placement.js';
 import { registerPreview } from './commands/preview.js';
-import { CLI_VERSION } from './lib/version.js';
+import { CLI_VERSION } from './lib/core/version.js';
 
 const program = new Command();
 

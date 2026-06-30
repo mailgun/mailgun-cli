@@ -1,4 +1,5 @@
-import type { DataGap } from './types.js';
+import type { DataGap } from '../../core/types.js';
+import { buildMailgunUrl, mailgunRequest } from '../../core/mailgun.js';
 
 // Inspect Email Preview (v2) normalizers. List uses GET /v2/preview/tests; detail
 // uses GET /v2/preview/tests/{test_id}, which returns completed/processing/bounced
@@ -34,6 +35,28 @@ export interface PreviewTestSummary {
 export interface PreviewListOutput {
   tests: PreviewTestSummary[];
   data_gaps: DataGap[];
+}
+
+export async function listPreviewTests(params: {
+  apiKey: string;
+  baseUrl: string;
+  limit: number;
+  subject?: string;
+  fromDate?: string;
+  toDate?: string;
+}): Promise<PreviewListOutput> {
+  const url = buildMailgunUrl(
+    '/v2/preview/tests',
+    {
+      results: params.limit,
+      subject: params.subject,
+      from: params.fromDate,
+      to: params.toDate
+    },
+    params.baseUrl
+  );
+  const response = await mailgunRequest<unknown>(url, params.apiKey, 'preview tests');
+  return normalizePreviewList(response);
 }
 
 export function normalizePreviewList(response: unknown): PreviewListOutput {
@@ -79,6 +102,16 @@ export interface PreviewResultOutput {
     code_analysis: ContentCheck;
   };
   data_gaps: DataGap[];
+}
+
+export async function getPreviewResult(params: {
+  apiKey: string;
+  baseUrl: string;
+  testId: string;
+}): Promise<PreviewResultOutput> {
+  const url = buildMailgunUrl(`/v2/preview/tests/${encodeURIComponent(params.testId)}`, undefined, params.baseUrl);
+  const response = await mailgunRequest<unknown>(url, params.apiKey, 'preview result');
+  return normalizePreviewResult(params.testId, response);
 }
 
 // Derive a top-level status mechanically from the client arrays.

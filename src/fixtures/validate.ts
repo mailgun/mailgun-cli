@@ -1,4 +1,4 @@
-import type { ValidateApiResponse } from '../lib/validate.js';
+import type { ValidateApiResponse } from '../lib/products/validate/address.js';
 
 // Fixtures mirror the raw `GET /v4/address/validate` response. The Validate
 // response varies by plan, so these cover full, plan-limited, and risky shapes.

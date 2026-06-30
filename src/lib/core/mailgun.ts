@@ -1,5 +1,5 @@
 import fetch from 'node-fetch';
-import { CliError } from './output.js';
+import { CliError } from '../cli/output.js';
 import { USER_AGENT } from './version.js';
 
 export type Region = 'us' | 'eu';
@@ -9,12 +9,14 @@ export const REGION_HOSTS: Record<Region, string> = {
   eu: 'https://api.eu.mailgun.net'
 };
 
-// Resolve the API base URL for a region. An internal, undocumented test hook
-// (MAILGUN_TEST_BASE_URL) redirects requests at a local mock server for
-// subprocess API-interception tests. It is not part of the public surface and
-// is never advertised in help or agent-context.
+// Resolve the API base URL for a region. Subprocess tests can redirect requests
+// to a local mock server, but only under NODE_ENV=test; production runtime
+// routing remains region-only.
 export function regionBaseUrl(region: Region): string {
-  return process.env.MAILGUN_TEST_BASE_URL ?? REGION_HOSTS[region];
+  if (process.env.NODE_ENV === 'test' && process.env.MAILGUN_TEST_BASE_URL) {
+    return process.env.MAILGUN_TEST_BASE_URL;
+  }
+  return REGION_HOSTS[region];
 }
 
 export function authHeader(apiKey: string): string {
@@ -91,9 +93,4 @@ export async function mailgunRequest<T>(
   }
 
   return (await response.json()) as T;
-}
-
-// Back-compat GET-only helper retained for the events utility command.
-export async function fetchMailgunJSON<T>(url: string, apiKey: string, operation: string): Promise<T> {
-  return mailgunRequest<T>(url, apiKey, operation, { method: 'GET' });
 }

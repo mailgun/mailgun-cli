@@ -63,7 +63,7 @@ test('events --tail shows a backlog (ascending=no) then polls forward (ascending
     let stdout = '';
     await new Promise<void>((resolve) => {
       const child = spawn(process.execPath, [cliPath, 'events', '--domain', 'acme.com', '--tail', '--interval', '100', '--json'], {
-        env: { ...process.env, CI: '1', MAILGUN_API_KEY: 'k', MAILGUN_TEST_BASE_URL: server.baseUrl }
+        env: { ...process.env, CI: '1', NODE_ENV: 'test', MAILGUN_API_KEY: 'k', MAILGUN_TEST_BASE_URL: server.baseUrl }
       });
       child.stdout?.on('data', (chunk) => {
         stdout += chunk;
@@ -129,7 +129,7 @@ test('events --tail resets the forward cursor after paging.next is exhausted', a
     let sawReset = false;
     await new Promise<void>((resolve) => {
       const child = spawn(process.execPath, [cliPath, 'events', '--domain', 'acme.com', '--tail', '--interval', '50', '--json'], {
-        env: { ...process.env, CI: '1', MAILGUN_API_KEY: 'k', MAILGUN_TEST_BASE_URL: mockServer.baseUrl }
+        env: { ...process.env, CI: '1', NODE_ENV: 'test', MAILGUN_API_KEY: 'k', MAILGUN_TEST_BASE_URL: mockServer.baseUrl }
       });
       const waitForReset = setInterval(() => {
         const forward = mockServer.requests.filter((r) => r.query.get('ascending') === 'yes');

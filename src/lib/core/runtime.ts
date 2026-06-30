@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { UsageError } from './output.js';
+import { UsageError } from '../cli/output.js';
 import { regionBaseUrl, type Region } from './mailgun.js';
 
 export interface RuntimeContext {

@@ -1,16 +1,15 @@
 import { Command } from 'commander';
-import { mergedOpts, resolveRuntime } from '../lib/runtime.js';
-import { buildMailgunUrl, mailgunRequest } from '../lib/mailgun.js';
-import { parseLimit, resolveRequiredArg } from '../lib/validation.js';
+import { mergedOpts, resolveRuntime } from '../lib/core/runtime.js';
+import { parseLimit, resolveRequiredArg } from '../lib/cli/input.js';
 import {
-  normalizeInboxList,
-  normalizeInboxResult,
+  listInboxPlacementResults,
+  getInboxPlacementResult,
   type InboxListOutput,
   type InboxResultOutput
-} from '../lib/optimize.js';
+} from '../lib/products/optimize/inbox-placement.js';
 import { addApiOptions } from './shared-options.js';
-import { chalkFor, handleCommandError, printError, printJSON } from '../lib/output.js';
-import { createSpinner } from '../lib/spinner.js';
+import { chalkFor, handleCommandError, printError, printJSON } from '../lib/cli/output.js';
+import { createSpinner } from '../lib/cli/spinner.js';
 
 function printList(output: InboxListOutput, opts: { json?: boolean; quiet?: boolean }): void {
   const chalk = chalkFor(opts);
@@ -68,20 +67,16 @@ function registerList(parent: Command): void {
       const runtime = resolveRuntime(command, { requireApiKey: true });
 
       spinner.start('Fetching inbox placement results...');
-      const url = buildMailgunUrl(
-        '/v4/inbox/results',
-        {
-          limit,
-          subject: opts.subject as string | undefined,
-          sender: opts.sender as string | undefined,
-          provider: opts.provider as string | undefined
-        },
-        runtime.baseUrl
-      );
-      const response = await mailgunRequest<unknown>(url, runtime.apiKey!, 'inbox placement results');
+      const output = await listInboxPlacementResults({
+        apiKey: runtime.apiKey!,
+        baseUrl: runtime.baseUrl,
+        limit,
+        subject: opts.subject as string | undefined,
+        sender: opts.sender as string | undefined,
+        provider: opts.provider as string | undefined
+      });
       spinner.stop();
 
-      const output = normalizeInboxList(response);
       if (runtime.json) printJSON(output);
       else printList(output, runtime);
     } catch (error) {
@@ -118,15 +113,14 @@ function registerResult(parent: Command): void {
       const runtime = resolveRuntime(command, { requireApiKey: true });
 
       spinner.start('Fetching inbox placement result...');
-      const url = buildMailgunUrl(
-        `/v4/inbox/results/${encodeURIComponent(resultId)}`,
-        { provider: opts.provider as string | undefined },
-        runtime.baseUrl
-      );
-      const response = await mailgunRequest<unknown>(url, runtime.apiKey!, 'inbox placement result');
+      const output = await getInboxPlacementResult({
+        apiKey: runtime.apiKey!,
+        baseUrl: runtime.baseUrl,
+        resultId,
+        provider: opts.provider as string | undefined
+      });
       spinner.stop();
 
-      const output = normalizeInboxResult(resultId, response);
       if (runtime.json) printJSON(output);
       else printResult(output, runtime);
     } catch (error) {

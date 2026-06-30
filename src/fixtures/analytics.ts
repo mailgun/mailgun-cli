@@ -1,4 +1,4 @@
-import type { SendMetricsResponse } from '../lib/analytics.js';
+import type { SendMetricsResponse } from '../lib/products/send/metrics.js';
 
 // Fixtures mirror the raw `POST /v1/analytics/metrics` response shape (aggregates
 // only, which is what the summary normalizer reads). Fixed June 2026 timestamps

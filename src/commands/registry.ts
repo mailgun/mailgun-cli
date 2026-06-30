@@ -1,4 +1,4 @@
-import type { ProductLabel } from '../lib/types.js';
+import type { ProductLabel } from '../lib/core/types.js';
 
 // Curated registry of durable PRODUCTION CLI commands. This represents the
 // supported CLI surface, not the set of Mailgun API endpoints. `agent-context`

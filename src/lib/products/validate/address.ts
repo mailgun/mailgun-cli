@@ -1,5 +1,6 @@
-import { UsageError } from './output.js';
-import type { DataGap } from './types.js';
+import { UsageError } from '../../cli/output.js';
+import { buildMailgunUrl, mailgunRequest } from '../../core/mailgun.js';
+import type { DataGap } from '../../core/types.js';
 
 // Validate v4 single-address verification. Output stays close to the API
 // response, lightly renaming `reason` -> `reasons` and tolerating plan-limited
@@ -49,6 +50,17 @@ export function buildValidateQuery(params: { address: string; providerLookup?: b
   const query: Record<string, string | boolean> = { address: params.address };
   if (params.providerLookup !== undefined) query.provider_lookup = params.providerLookup;
   return query;
+}
+
+export async function validateEmail(params: {
+  apiKey: string;
+  baseUrl: string;
+  address: string;
+  providerLookup?: boolean;
+}): Promise<ValidationResult> {
+  const url = buildMailgunUrl('/v4/address/validate', buildValidateQuery(params), params.baseUrl);
+  const response = await mailgunRequest<ValidateApiResponse>(url, params.apiKey, 'address validation');
+  return normalizeValidation(params.address, response);
 }
 
 export function normalizeValidation(address: string, data: ValidateApiResponse): ValidationResult {

@@ -1,10 +1,13 @@
 import { Command } from 'commander';
 import { z } from 'zod';
-import { mergedOpts, resolveRuntime } from '../lib/runtime.js';
-import { buildMailgunUrl, mailgunRequest } from '../lib/mailgun.js';
-import { eventSymbol, formatEventTime, normalizeEvent, tailDedupeKey, type NormalizedEvent } from '../lib/events.js';
+import { mergedOpts, resolveRuntime } from '../lib/core/runtime.js';
+import {
+  fetchRecentEvents,
+  tailEvents,
+  type NormalizedEvent
+} from '../lib/products/send/events.js';
 import { addApiOptions } from './shared-options.js';
-import { chalkFor, handleCommandError, pad, truncate, UsageError } from '../lib/output.js';
+import { chalkFor, handleCommandError, pad, truncate, UsageError } from '../lib/cli/output.js';
 
 const ALLOWED_FILTERS = ['delivered', 'failed', 'opened', 'clicked', 'complained'] as const;
 
@@ -27,9 +30,25 @@ const eventsInputSchema = z.object({
     .max(300, '--limit must be 300 or less')
 });
 
-interface EventsResponse {
-  items?: unknown[];
-  paging?: { next?: string };
+function eventSymbol(event: string): string {
+  if (event === 'delivered') return '✓';
+  if (event === 'failed') return '✗';
+  if (event === 'opened') return '↩';
+  if (event === 'clicked') return '↪';
+  if (event === 'complained') return '!';
+  return '-';
+}
+
+function formatEventTime(timestamp: string, includeDate = false): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return timestamp;
+  const yyyy = date.getUTCFullYear();
+  const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(date.getUTCDate()).padStart(2, '0');
+  const hh = String(date.getUTCHours()).padStart(2, '0');
+  const min = String(date.getUTCMinutes()).padStart(2, '0');
+  const sec = String(date.getUTCSeconds()).padStart(2, '0');
+  return includeDate ? `${yyyy}-${mm}-${dd} ${hh}:${min}` : `${hh}:${min}:${sec}`;
 }
 
 function writeJSONEvent(event: NormalizedEvent): void {
@@ -66,41 +85,6 @@ function writeEvent(event: NormalizedEvent, opts: { json?: boolean; quiet?: bool
   else writeHumanEvent(event, opts);
 }
 
-async function fetchEventsPage(url: string, apiKey: string, domain: string): Promise<{ events: NormalizedEvent[]; next?: string }> {
-  const response = await mailgunRequest<EventsResponse>(url, apiKey, 'events');
-  return {
-    events: (response.items ?? []).map((event) => normalizeEvent(event, domain)),
-    next: response.paging?.next
-  };
-}
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function maxEventTimestampMs(events: NormalizedEvent[], current = 0): number {
-  let latestMs = current;
-  for (const event of events) {
-    const ms = Date.parse(event.timestamp);
-    if (Number.isFinite(ms)) latestMs = Math.max(latestMs, ms);
-  }
-  return latestMs;
-}
-
-function beginSecFromMs(latestMs: number): number {
-  return latestMs > 0 ? Math.floor(latestMs / 1000) : Math.floor(Date.now() / 1000);
-}
-
-function buildForwardPollUrl(
-  path: string,
-  eventExpr: string,
-  beginSec: number,
-  limit: number,
-  baseUrl: string
-): string {
-  return buildMailgunUrl(path, { event: eventExpr, ascending: 'yes', begin: beginSec, limit }, baseUrl);
-}
-
 export function registerEvents(program: Command): void {
   const command = program
     .command('events')
@@ -129,21 +113,17 @@ export function registerEvents(program: Command): void {
       const runtime = resolveRuntime(cmd, { requireApiKey: true, requireDomain: true });
       const apiKey = runtime.apiKey!;
       const domain = runtime.domain!;
-      const path = `/v3/${encodeURIComponent(domain)}/events`;
       // Mailgun's events API expects a single `event` filter expression with
       // types joined by OR; repeated `event` params match nothing.
       const eventExpr = filter.join(' OR ');
-      const dedupe = new Set<string>();
+      const fetchParams = { apiKey, baseUrl: runtime.baseUrl, domain, eventExpr, limit };
 
-      // Single fetch: most recent `limit` events, newest first (descending).
       if (opts.tail !== true) {
-        const url = buildMailgunUrl(path, { event: eventExpr, limit, ascending: 'no' }, runtime.baseUrl);
-        const page = await fetchEventsPage(url, apiKey, domain);
-        for (const event of page.events) writeEvent(event, opts);
+        const events = await fetchRecentEvents(fetchParams);
+        for (const event of events) writeEvent(event, opts);
         return;
       }
 
-      // Tail: show a recent backlog, then poll forward for new events.
       if (opts.json !== true && opts.quiet !== true) {
         process.stdout.write(`Tailing events for ${domain} - Ctrl+C to stop\n`);
       }
@@ -153,41 +133,7 @@ export function registerEvents(program: Command): void {
         process.exit(0);
       });
 
-      // Backlog: fetch the most recent `limit` events (descending) and print them
-      // chronologically so new events append naturally below.
-      const backlogUrl = buildMailgunUrl(path, { event: eventExpr, limit, ascending: 'no' }, runtime.baseUrl);
-      const backlog = await fetchEventsPage(backlogUrl, apiKey, domain);
-      let latestMs = 0;
-      for (const event of [...backlog.events].reverse()) {
-        const key = tailDedupeKey(event);
-        if (!dedupe.has(key)) {
-          dedupe.add(key);
-          writeEvent(event, opts);
-        }
-        latestMs = maxEventTimestampMs([event], latestMs);
-      }
-
-      // Poll forward: drain each interval's pages via paging.next, then reset the
-      // cursor from the newest timestamp seen so the next cycle does not stick on
-      // an exhausted page URL.
-      let beginSec = beginSecFromMs(latestMs);
-      while (true) {
-        await sleep(interval);
-        let pollUrl = buildForwardPollUrl(path, eventExpr, beginSec, limit, runtime.baseUrl);
-        do {
-          const page = await fetchEventsPage(pollUrl, apiKey, domain);
-          for (const event of page.events) {
-            const key = tailDedupeKey(event);
-            if (dedupe.has(key)) continue;
-            dedupe.add(key);
-            writeEvent(event, opts);
-            latestMs = maxEventTimestampMs([event], latestMs);
-          }
-          if (!page.next) break;
-          pollUrl = page.next;
-        } while (true);
-        beginSec = beginSecFromMs(latestMs);
-      }
+      await tailEvents({ ...fetchParams, interval }, (event) => writeEvent(event, opts));
     } catch (error) {
       handleCommandError(error);
     }

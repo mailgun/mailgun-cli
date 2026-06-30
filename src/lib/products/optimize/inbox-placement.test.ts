@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeInboxList, normalizeInboxResult } from './optimize.js';
+import { normalizeInboxList, normalizeInboxResult } from './inbox-placement.js';
 import {
   INBOX_LIST,
   INBOX_LIST_EMPTY,
   INBOX_RESULT_COMPLETE,
   INBOX_RESULT_PROVIDER,
   INBOX_RESULT_PROCESSING
-} from '../fixtures/optimize.js';
+} from '../../../fixtures/optimize.js';
 
 test('list normalizes nested basictestresult fields', () => {
   const out = normalizeInboxList(INBOX_LIST);

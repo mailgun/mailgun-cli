@@ -65,8 +65,3 @@ export function pad(value: string | number | null | undefined, width: number): s
 export function percent(value: number | null): string {
   return value === null ? 'n/a' : `${(value * 100).toFixed(1)}%`;
 }
-
-export async function demoDelay(enabled: boolean): Promise<void> {
-  if (!enabled) return;
-  await new Promise((resolve) => setTimeout(resolve, 350));
-}

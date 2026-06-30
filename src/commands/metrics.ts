@@ -1,16 +1,10 @@
 import { Command } from 'commander';
 import { z } from 'zod';
-import { resolveRuntime, mergedOpts } from '../lib/runtime.js';
-import { buildMailgunUrl, mailgunRequest } from '../lib/mailgun.js';
-import {
-  buildMetricsRequestBody,
-  buildMetricsSummary,
-  type SendMetricsResponse,
-  type MetricsSummary
-} from '../lib/analytics.js';
+import { resolveRuntime, mergedOpts } from '../lib/core/runtime.js';
+import { getMetricsSummary, type MetricsSummary } from '../lib/products/send/metrics.js';
 import { addApiOptions } from './shared-options.js';
-import { chalkFor, handleCommandError, percent, printError, printJSON, UsageError } from '../lib/output.js';
-import { createSpinner } from '../lib/spinner.js';
+import { chalkFor, handleCommandError, percent, printError, printJSON, UsageError } from '../lib/cli/output.js';
+import { createSpinner } from '../lib/cli/spinner.js';
 
 const isoSchema = z.string().datetime({ offset: true, message: 'must be an ISO 8601 timestamp' });
 
@@ -105,15 +99,14 @@ export function registerMetrics(program: Command): void {
       const runtime = resolveRuntime(command, { requireApiKey: true, requireDomain: true });
 
       spinner.start('Fetching metrics...');
-      const url = buildMailgunUrl('/v1/analytics/metrics', undefined, runtime.baseUrl);
-      const body = buildMetricsRequestBody({ domain: runtime.domain!, ...input });
-      const response = await mailgunRequest<SendMetricsResponse>(url, runtime.apiKey!, 'metrics', {
-        method: 'POST',
-        body
+      const result = await getMetricsSummary({
+        apiKey: runtime.apiKey!,
+        baseUrl: runtime.baseUrl,
+        domain: runtime.domain!,
+        ...input
       });
       spinner.stop();
 
-      const result = buildMetricsSummary(runtime.domain!, response);
       if (runtime.json) printJSON(result);
       else printHuman(result, runtime);
     } catch (error) {

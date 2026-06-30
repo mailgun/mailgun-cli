@@ -1,6 +1,6 @@
 import { Command } from 'commander';
-import { printJSON } from '../lib/output.js';
-import { CLI_NAME, CLI_VERSION } from '../lib/version.js';
+import { printJSON } from '../lib/cli/output.js';
+import { CLI_NAME, CLI_VERSION } from '../lib/core/version.js';
 import { COMMAND_REGISTRY, type RegistryCommand } from './registry.js';
 
 function serializeCommand(entry: RegistryCommand): Record<string, unknown> {

@@ -1,16 +1,13 @@
 import { Command } from 'commander';
-import { mergedOpts, resolveRuntime } from '../lib/runtime.js';
-import { buildMailgunUrl, mailgunRequest } from '../lib/mailgun.js';
+import { mergedOpts, resolveRuntime } from '../lib/core/runtime.js';
 import {
-  buildValidateQuery,
-  normalizeValidation,
   resolveAddress,
-  type ValidateApiResponse,
+  validateEmail,
   type ValidationResult
-} from '../lib/validate.js';
+} from '../lib/products/validate/address.js';
 import { addApiOptions } from './shared-options.js';
-import { chalkFor, handleCommandError, printJSON, UsageError } from '../lib/output.js';
-import { createSpinner } from '../lib/spinner.js';
+import { chalkFor, handleCommandError, printJSON, UsageError } from '../lib/cli/output.js';
+import { createSpinner } from '../lib/cli/spinner.js';
 
 // --provider-lookup requires an explicit true/false; anything else exits 2.
 export function parseProviderLookup(value: unknown): boolean | undefined {
@@ -58,11 +55,14 @@ export function registerValidateEmail(program: Command): void {
       const runtime = resolveRuntime(cmd, { requireApiKey: true });
 
       spinner.start('Validating address...');
-      const url = buildMailgunUrl('/v4/address/validate', buildValidateQuery({ address, providerLookup }), runtime.baseUrl);
-      const response = await mailgunRequest<ValidateApiResponse>(url, runtime.apiKey!, 'address validation');
+      const result = await validateEmail({
+        apiKey: runtime.apiKey!,
+        baseUrl: runtime.baseUrl,
+        address,
+        providerLookup
+      });
       spinner.stop();
 
-      const result = normalizeValidation(address, response);
       if (runtime.json) printJSON(result);
       else printHuman(result, runtime);
     } catch (error) {

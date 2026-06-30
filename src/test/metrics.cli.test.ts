@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startMockServer, runCli } from './mock-server.js';
 import { METRICS_POPULATED } from '../fixtures/analytics.js';
-import { USER_AGENT } from '../lib/version.js';
+import { USER_AGENT } from '../lib/core/version.js';
 
 test('metrics summary success path: POST body, basic auth, region host', async () => {
   const server = await startMockServer([

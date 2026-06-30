@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildMetricsRequestBody, buildMetricsSummary } from './analytics.js';
-import { METRICS_POPULATED, METRICS_NO_SEND } from '../fixtures/analytics.js';
+import { buildMetricsRequestBody, buildMetricsSummary } from './metrics.js';
+import { METRICS_POPULATED, METRICS_NO_SEND } from '../../../fixtures/analytics.js';
 
 test('request body includes metrics, aggregates, and domain filter', () => {
   const body = buildMetricsRequestBody({ domain: 'acme.com', duration: '7d' }) as Record<string, any>;

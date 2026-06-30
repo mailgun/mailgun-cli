@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateMetricsInput } from './metrics.js';
-import { UsageError } from '../lib/output.js';
+import { UsageError } from '../lib/cli/output.js';
 
 test('window aliases to duration', () => {
   assert.deepEqual(validateMetricsInput({ window: '7d' }), { duration: '7d', start: undefined, end: undefined, timezone: undefined });

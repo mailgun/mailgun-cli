@@ -86,6 +86,7 @@ export async function runCli(
       env: {
         ...process.env,
         CI: '1',
+        NODE_ENV: 'test',
         MAILGUN_API_KEY: undefined,
         MAILGUN_DOMAIN: undefined,
         MAILGUN_API_REGION: undefined,

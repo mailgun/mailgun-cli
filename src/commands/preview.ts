@@ -1,16 +1,15 @@
 import { Command } from 'commander';
-import { mergedOpts, resolveRuntime } from '../lib/runtime.js';
-import { buildMailgunUrl, mailgunRequest } from '../lib/mailgun.js';
-import { parseLimit, resolveRequiredArg } from '../lib/validation.js';
+import { mergedOpts, resolveRuntime } from '../lib/core/runtime.js';
+import { parseLimit, resolveRequiredArg } from '../lib/cli/input.js';
 import {
-  normalizePreviewList,
-  normalizePreviewResult,
+  listPreviewTests,
+  getPreviewResult,
   type PreviewListOutput,
   type PreviewResultOutput
-} from '../lib/inspect.js';
+} from '../lib/products/inspect/preview.js';
 import { addApiOptions } from './shared-options.js';
-import { chalkFor, handleCommandError, printError, printJSON } from '../lib/output.js';
-import { createSpinner } from '../lib/spinner.js';
+import { chalkFor, handleCommandError, printError, printJSON } from '../lib/cli/output.js';
+import { createSpinner } from '../lib/cli/spinner.js';
 
 function printList(output: PreviewListOutput, opts: { json?: boolean; quiet?: boolean }): void {
   const chalk = chalkFor(opts);
@@ -72,20 +71,16 @@ function registerList(parent: Command): void {
       const runtime = resolveRuntime(command, { requireApiKey: true });
 
       spinner.start('Fetching preview tests...');
-      const url = buildMailgunUrl(
-        '/v2/preview/tests',
-        {
-          results: limit,
-          subject: opts.subject as string | undefined,
-          from: opts.fromDate as string | undefined,
-          to: opts.toDate as string | undefined
-        },
-        runtime.baseUrl
-      );
-      const response = await mailgunRequest<unknown>(url, runtime.apiKey!, 'preview tests');
+      const output = await listPreviewTests({
+        apiKey: runtime.apiKey!,
+        baseUrl: runtime.baseUrl,
+        limit,
+        subject: opts.subject as string | undefined,
+        fromDate: opts.fromDate as string | undefined,
+        toDate: opts.toDate as string | undefined
+      });
       spinner.stop();
 
-      const output = normalizePreviewList(response);
       if (runtime.json) printJSON(output);
       else printList(output, runtime);
     } catch (error) {
@@ -121,11 +116,13 @@ function registerResult(parent: Command): void {
       const runtime = resolveRuntime(command, { requireApiKey: true });
 
       spinner.start('Fetching preview result...');
-      const url = buildMailgunUrl(`/v2/preview/tests/${encodeURIComponent(testId)}`, undefined, runtime.baseUrl);
-      const response = await mailgunRequest<unknown>(url, runtime.apiKey!, 'preview result');
+      const output = await getPreviewResult({
+        apiKey: runtime.apiKey!,
+        baseUrl: runtime.baseUrl,
+        testId
+      });
       spinner.stop();
 
-      const output = normalizePreviewResult(testId, response);
       if (runtime.json) printJSON(output);
       else printResult(output, runtime);
     } catch (error) {

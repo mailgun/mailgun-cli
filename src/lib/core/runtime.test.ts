@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveRegion } from './runtime.js';
 import { regionBaseUrl, REGION_HOSTS } from './mailgun.js';
-import { UsageError } from './output.js';
+import { UsageError } from '../cli/output.js';
 
 test('region defaults to us', () => {
   delete process.env.MAILGUN_API_REGION;

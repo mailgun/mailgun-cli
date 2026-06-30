@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { derivePreviewStatus, normalizePreviewList, normalizePreviewResult } from './inspect.js';
+import { derivePreviewStatus, normalizePreviewList, normalizePreviewResult } from './preview.js';
 import {
   PREVIEW_LIST,
   PREVIEW_LIST_EMPTY,
   PREVIEW_RESULT_COMPLETE,
   PREVIEW_RESULT_PARTIAL,
   PREVIEW_RESULT_PROCESSING
-} from '../fixtures/inspect.js';
+} from '../../../fixtures/inspect.js';
 
 test('list maps id/subject/from/date and leaves status null', () => {
   const out = normalizePreviewList(PREVIEW_LIST);
