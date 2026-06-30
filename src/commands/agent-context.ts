@@ -1,9 +1,10 @@
 import { Command } from 'commander';
 import { printJSON } from '../lib/cli/output.js';
 import { CLI_NAME, CLI_VERSION } from '../lib/core/version.js';
-import { COMMAND_REGISTRY, type RegistryCommand } from './registry.js';
+import { type CommandDescriptor } from './descriptor.js';
+import { COMMAND_REGISTRY } from './registry.js';
 
-function serializeCommand(entry: RegistryCommand): Record<string, unknown> {
+function serializeCommand(entry: CommandDescriptor): Record<string, unknown> {
   const serialized: Record<string, unknown> = {
     mode: entry.mode,
     description: entry.description

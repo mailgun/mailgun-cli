@@ -5,8 +5,25 @@ import { getMetricsSummary, type MetricsSummary } from '../lib/products/send/met
 import { addApiOptions } from './shared-options.js';
 import { chalkFor, handleCommandError, percent, printError, printJSON, UsageError } from '../lib/cli/output.js';
 import { createSpinner } from '../lib/cli/spinner.js';
+import type { CommandDescriptor } from './descriptor.js';
 
 const isoSchema = z.string().datetime({ offset: true, message: 'must be an ISO 8601 timestamp' });
+
+export const METRICS_DESCRIPTORS: CommandDescriptor[] = [
+  {
+    command: 'metrics summary',
+    mode: 'read',
+    description: 'Summarize sending metrics (counts and computed rates) for a domain and window',
+    product: 'Send',
+    mcpTool: 'get_metrics_summary',
+    flags: ['--domain', '--window', '--duration', '--start', '--end', '--timezone', '--region', '--json', '--quiet'],
+    outputFields: ['domain', 'metrics_raw', 'rates', 'data_gaps', 'window'],
+    examples: [
+      'mailgun metrics summary --domain acme.com --json',
+      'mailgun metrics summary --domain acme.com --duration 24h --json'
+    ]
+  }
+];
 
 interface ResolvedMetricsInput {
   duration?: string;

@@ -10,6 +10,32 @@ import {
 import { addApiOptions } from './shared-options.js';
 import { chalkFor, handleCommandError, printError, printJSON } from '../lib/cli/output.js';
 import { createSpinner } from '../lib/cli/spinner.js';
+import type { CommandDescriptor } from './descriptor.js';
+
+export const PREVIEW_DESCRIPTORS: CommandDescriptor[] = [
+  {
+    command: 'preview list',
+    mode: 'read',
+    description: 'List recent email preview test IDs',
+    product: 'Inspect',
+    flags: ['--limit', '--subject', '--from-date', '--to-date', '--region', '--json', '--quiet'],
+    outputFields: ['tests', 'data_gaps'],
+    examples: [
+      'mailgun preview list --limit 10 --json',
+      'mailgun preview list --subject "June campaign" --json'
+    ]
+  },
+  {
+    command: 'preview result',
+    mode: 'read',
+    description: 'Retrieve and summarize an email preview result',
+    product: 'Inspect',
+    mcpTool: 'get_preview_result',
+    flags: ['--test-id', '--region', '--json', '--quiet'],
+    outputFields: ['test_id', 'status', 'summary', 'clients', 'content_checking', 'data_gaps'],
+    examples: ['mailgun preview result --test-id preview_123 --json']
+  }
+];
 
 function printList(output: PreviewListOutput, opts: { json?: boolean; quiet?: boolean }): void {
   const chalk = chalkFor(opts);

@@ -8,20 +8,31 @@ const cliPath = fileURLToPath(new URL('../index.js', import.meta.url));
 
 const EVENTS_RESPONSE = {
   items: [
-    { id: 'evt-1', timestamp: '2026-06-19T22:10:00Z', event: 'delivered', recipient: 'a@b.com' },
-    { id: 'evt-2', timestamp: '2026-06-19T22:10:03Z', event: 'failed', recipient: 'c@d.com', 'delivery-status': { code: 550, message: '550 IP listed' } }
+    { id: 'evt-1', '@timestamp': '2026-06-19T22:10:00Z', event: 'delivered', domain: { name: 'acme.com' }, recipient: 'a@b.com' },
+    {
+      id: 'evt-2',
+      '@timestamp': '2026-06-19T22:10:03Z',
+      event: 'failed',
+      domain: { name: 'acme.com' },
+      recipient: 'c@d.com',
+      'delivery-status': { code: 550, message: '550 IP listed' }
+    }
   ],
-  paging: {}
+  pagination: {}
 };
 
-// ascending=no returns newest-first; mocks should mirror that ordering.
+// timestamp:desc returns newest-first; mocks should mirror that ordering.
 const EVENTS_RESPONSE_DESC = {
   items: [...EVENTS_RESPONSE.items].reverse(),
-  paging: {}
+  pagination: {}
 };
 
+function requestBody(request: RecordedRequest): any {
+  return JSON.parse(request.body);
+}
+
 test('events single-fetch emits NDJSON via the real (mocked) API path', async () => {
-  const server = await startMockServer([{ method: 'GET', path: '/v3/', json: EVENTS_RESPONSE }]);
+  const server = await startMockServer([{ method: 'POST', path: '/v1/analytics/logs', json: EVENTS_RESPONSE }]);
   try {
     const result = await runCli(['events', '--domain', 'acme.com', '--json'], { MAILGUN_API_KEY: 'k' }, server.baseUrl);
     assert.equal(result.code, 0);
@@ -29,18 +40,25 @@ test('events single-fetch emits NDJSON via the real (mocked) API path', async ()
     const lines = result.stdout.trim().split('\n');
     assert.equal(lines.length, 2);
     assert.equal(JSON.parse(lines[0]!).domain, 'acme.com');
-    assert.equal(server.requests[0]!.path, '/v3/acme.com/events');
+    assert.equal(server.requests[0]!.path, '/v1/analytics/logs');
+    assert.equal(server.requests[0]!.method, 'POST');
     assert.match(String(server.requests[0]!.headers.authorization), /^Basic /);
-    // Mailgun expects a single OR-joined event filter, not repeated params.
-    assert.deepEqual(server.requests[0]!.query.getAll('event'), ['delivered OR failed OR opened OR clicked OR complained']);
-    assert.equal(server.requests[0]!.query.get('limit'), '10');
+    const body = requestBody(server.requests[0]!);
+    assert.deepEqual(body.events, ['delivered', 'failed', 'opened', 'clicked', 'complained']);
+    assert.deepEqual(body.filter.AND[0], {
+      attribute: 'domain',
+      comparator: '=',
+      values: [{ label: 'acme.com', value: 'acme.com' }]
+    });
+    assert.equal(body.pagination.limit, 10);
+    assert.equal(body.pagination.sort, 'timestamp:desc');
   } finally {
     await server.close();
   }
 });
 
 test('events single-fetch forwards --limit and custom --filter to the API', async () => {
-  const server = await startMockServer([{ method: 'GET', path: '/v3/', json: { items: [EVENTS_RESPONSE.items[0]], paging: {} } }]);
+  const server = await startMockServer([{ method: 'POST', path: '/v1/analytics/logs', json: { items: [EVENTS_RESPONSE.items[0]], pagination: {} } }]);
   try {
     const result = await runCli(
       ['events', '--domain', 'acme.com', '--limit', '1', '--filter', 'delivered,failed', '--json'],
@@ -48,8 +66,9 @@ test('events single-fetch forwards --limit and custom --filter to the API', asyn
       server.baseUrl
     );
     assert.equal(result.code, 0);
-    assert.equal(server.requests[0]!.query.get('limit'), '1');
-    assert.deepEqual(server.requests[0]!.query.getAll('event'), ['delivered OR failed']);
+    const body = requestBody(server.requests[0]!);
+    assert.equal(body.pagination.limit, 1);
+    assert.deepEqual(body.events, ['delivered', 'failed']);
     const lines = result.stdout.trim().split('\n');
     assert.equal(lines.length, 1);
   } finally {
@@ -57,8 +76,8 @@ test('events single-fetch forwards --limit and custom --filter to the API', asyn
   }
 });
 
-test('events --tail shows a backlog (ascending=no) then polls forward (ascending=yes + begin)', async () => {
-  const server = await startMockServer([{ method: 'GET', path: '/v3/', json: EVENTS_RESPONSE_DESC }]);
+test('events --tail shows a backlog (timestamp:desc) then polls forward (timestamp:asc + start/end)', async () => {
+  const server = await startMockServer([{ method: 'POST', path: '/v1/analytics/logs', json: EVENTS_RESPONSE_DESC }]);
   try {
     let stdout = '';
     await new Promise<void>((resolve) => {
@@ -69,7 +88,7 @@ test('events --tail shows a backlog (ascending=no) then polls forward (ascending
         stdout += chunk;
       });
       const waitForPolls = setInterval(() => {
-        const forwardPolls = server.requests.filter((r) => r.query.get('ascending') === 'yes');
+        const forwardPolls = server.requests.filter((r) => requestBody(r).pagination.sort === 'timestamp:asc');
         if (forwardPolls.length >= 2) {
           clearInterval(waitForPolls);
           clearTimeout(safety);
@@ -83,13 +102,14 @@ test('events --tail shows a backlog (ascending=no) then polls forward (ascending
       child.on('close', () => resolve());
     });
 
-    const ascendingValues = server.requests.map((r) => r.query.get('ascending'));
-    assert.ok(ascendingValues.includes('no'), 'backlog request should use ascending=no');
-    const poll = server.requests.find((r) => r.query.get('ascending') === 'yes');
-    assert.ok(poll, 'should issue a forward poll with ascending=yes');
-    assert.ok(poll!.query.get('begin'), 'forward poll should carry a begin anchor');
-    assert.equal(poll!.query.get('limit'), '10', 'forward poll should pass limit');
-    assert.equal(server.requests[0]!.query.get('ascending'), 'no');
+    const bodies = server.requests.map((r) => requestBody(r));
+    assert.ok(bodies.some((body) => body.pagination.sort === 'timestamp:desc'), 'backlog request should use timestamp:desc');
+    const poll = bodies.find((body) => body.pagination.sort === 'timestamp:asc');
+    assert.ok(poll, 'should issue a forward poll with timestamp:asc');
+    assert.ok(poll!.start, 'forward poll should carry a start anchor');
+    assert.ok(poll!.end, 'forward poll should carry an end anchor');
+    assert.equal(poll!.pagination.limit, 10, 'forward poll should pass limit');
+    assert.equal(bodies[0]!.pagination.sort, 'timestamp:desc');
 
     const lines = stdout.trim().split('\n').filter(Boolean);
     assert.equal(lines.length, 2, 'tail backlog should emit each event once despite repeat polls');
@@ -100,28 +120,29 @@ test('events --tail shows a backlog (ascending=no) then polls forward (ascending
   }
 });
 
-test('events --tail resets the forward cursor after paging.next is exhausted', async () => {
+test('events --tail resets the forward cursor after pagination.next is exhausted', async () => {
   let mockServer: Awaited<ReturnType<typeof startMockServer>>;
   let forwardWithoutPage = 0;
   mockServer = await startMockServer([
     {
-      method: 'GET',
-      path: '/v3/',
+      method: 'POST',
+      path: '/v1/analytics/logs',
       json: (req: RecordedRequest) => {
-        if (req.query.get('ascending') === 'no') {
-          return { items: [EVENTS_RESPONSE_DESC.items[0]], paging: {} };
+        const body = requestBody(req);
+        if (body.pagination.sort === 'timestamp:desc') {
+          return { items: [EVENTS_RESPONSE_DESC.items[0]], pagination: {} };
         }
-        if (req.query.get('page') === '2') {
-          return { items: [], paging: {} };
+        if (body.pagination.token === 'page-2') {
+          return { items: [], pagination: {} };
         }
         forwardWithoutPage += 1;
         if (forwardWithoutPage === 1) {
           return {
             items: [EVENTS_RESPONSE.items[1]],
-            paging: { next: `${mockServer.baseUrl}/v3/acme.com/events?ascending=yes&begin=1781926200&page=2` }
+            pagination: { next: 'page-2' }
           };
         }
-        return { items: [], paging: {} };
+        return { items: [], pagination: {} };
       }
     }
   ]);
@@ -132,10 +153,12 @@ test('events --tail resets the forward cursor after paging.next is exhausted', a
         env: { ...process.env, CI: '1', NODE_ENV: 'test', MAILGUN_API_KEY: 'k', MAILGUN_TEST_BASE_URL: mockServer.baseUrl }
       });
       const waitForReset = setInterval(() => {
-        const forward = mockServer.requests.filter((r) => r.query.get('ascending') === 'yes');
+        const forward = mockServer.requests
+          .map((r) => requestBody(r))
+          .filter((body) => body.pagination.sort === 'timestamp:asc');
         if (
-          forward.some((r) => r.query.get('page') === '2') &&
-          forward.some((r) => !r.query.get('page')) &&
+          forward.some((body) => body.pagination.token === 'page-2') &&
+          forward.some((body) => body.pagination.token === undefined) &&
           forwardWithoutPage >= 2
         ) {
           sawReset = true;
@@ -151,21 +174,23 @@ test('events --tail resets the forward cursor after paging.next is exhausted', a
       child.on('close', () => resolve());
     });
 
-    assert.ok(sawReset, 'should start a new forward poll cycle after paging.next is exhausted');
-    const forward = mockServer.requests.filter((r) => r.query.get('ascending') === 'yes');
-    assert.ok(forward.some((r) => r.query.get('page') === '2'), 'should follow paging.next within a poll cycle');
-    const resetPolls = forward.filter((r) => !r.query.get('page'));
-    assert.ok(resetPolls.length >= 2, 'second forward cycle should use a fresh begin URL, not a stale page link');
-    assert.ok(resetPolls[resetPolls.length - 1]!.query.get('begin'), 'reset poll should carry an updated begin anchor');
+    assert.ok(sawReset, 'should start a new forward poll cycle after pagination.next is exhausted');
+    const forward = mockServer.requests
+      .map((r) => requestBody(r))
+      .filter((body) => body.pagination.sort === 'timestamp:asc');
+    assert.ok(forward.some((body) => body.pagination.token === 'page-2'), 'should follow pagination.next within a poll cycle');
+    const resetPolls = forward.filter((body) => body.pagination.token === undefined);
+    assert.ok(resetPolls.length >= 2, 'second forward cycle should use a fresh poll window, not a stale page token');
+    assert.ok(resetPolls[resetPolls.length - 1]!.start, 'reset poll should carry an updated begin anchor');
   } finally {
     await mockServer.close();
   }
 });
 
-test('events rejects --limit over 300 with exit 2', async () => {
-  const result = await runCli(['events', '--domain', 'acme.com', '--limit', '301', '--json'], { MAILGUN_API_KEY: 'k' });
+test('events rejects --limit over 100 with exit 2', async () => {
+  const result = await runCli(['events', '--domain', 'acme.com', '--limit', '101', '--json'], { MAILGUN_API_KEY: 'k' });
   assert.equal(result.code, 2);
-  assert.match(result.stderr, /--limit must be 300 or less/);
+  assert.match(result.stderr, /--limit must be 100 or less/);
 });
 
 test('events rejects decimal --limit with exit 2', async () => {
@@ -195,12 +220,12 @@ test('events invalid --filter exits 2', async () => {
 });
 
 test('events 403 surfaces API response', async () => {
-  const server = await startMockServer([{ method: 'GET', path: '/v3/', status: 403, json: { message: 'forbidden' } }]);
+  const server = await startMockServer([{ method: 'POST', path: '/v1/analytics/logs', status: 403, json: { message: 'forbidden' } }]);
   try {
     const result = await runCli(['events', '--domain', 'acme.com', '--json'], { MAILGUN_API_KEY: 'k' }, server.baseUrl);
     assert.equal(result.code, 1);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /403 for events/);
+    assert.match(result.stderr, /403 for logs/);
     assert.match(result.stderr, /"message":"forbidden"/);
   } finally {
     await server.close();

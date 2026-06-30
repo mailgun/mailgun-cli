@@ -10,6 +10,35 @@ import {
 import { addApiOptions } from './shared-options.js';
 import { chalkFor, handleCommandError, printError, printJSON } from '../lib/cli/output.js';
 import { createSpinner } from '../lib/cli/spinner.js';
+import type { CommandDescriptor } from './descriptor.js';
+
+export const INBOX_PLACEMENT_DESCRIPTORS: CommandDescriptor[] = [
+  {
+    command: 'inbox-placement list',
+    mode: 'read',
+    description: 'List recent inbox placement result IDs',
+    product: 'Optimize',
+    flags: ['--limit', '--subject', '--sender', '--provider', '--region', '--json', '--quiet'],
+    outputFields: ['results', 'data_gaps'],
+    examples: [
+      'mailgun inbox-placement list --limit 10 --json',
+      'mailgun inbox-placement list --provider gmail.com --json'
+    ]
+  },
+  {
+    command: 'inbox-placement result',
+    mode: 'read',
+    description: 'Retrieve and summarize an inbox placement result',
+    product: 'Optimize',
+    mcpTool: 'get_inbox_placement_result',
+    flags: ['--result', '--provider', '--region', '--json', '--quiet'],
+    outputFields: ['result_id', 'status', 'subject', 'sender', 'placement', 'providers', 'spamassassin', 'data_gaps'],
+    examples: [
+      'mailgun inbox-placement result --result result_123 --json',
+      'mailgun inbox-placement result --result result_123 --provider gmail.com --json'
+    ]
+  }
+];
 
 function printList(output: InboxListOutput, opts: { json?: boolean; quiet?: boolean }): void {
   const chalk = chalkFor(opts);

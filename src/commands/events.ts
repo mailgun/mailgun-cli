@@ -5,11 +5,25 @@ import {
   fetchRecentEvents,
   tailEvents,
   type NormalizedEvent
-} from '../lib/products/send/events.js';
+} from '../lib/products/send/logs.js';
 import { addApiOptions } from './shared-options.js';
 import { chalkFor, handleCommandError, pad, truncate, UsageError } from '../lib/cli/output.js';
+import type { CommandDescriptor } from './descriptor.js';
 
 const ALLOWED_FILTERS = ['delivered', 'failed', 'opened', 'clicked', 'complained'] as const;
+
+export const EVENTS_DESCRIPTORS: CommandDescriptor[] = [
+  {
+    command: 'events',
+    mode: 'read',
+    description: 'Stream live delivery events',
+    product: 'Send',
+    flags: ['--tail', '--filter', '--interval', '--limit', '--domain', '--region', '--json', '--quiet'],
+    outputFormat: 'ndjson',
+    outputFields: ['timestamp', 'event', 'recipient', 'domain', 'reason', 'code', 'tags'],
+    examples: ['mailgun events --domain acme.com --tail', 'mailgun events --domain acme.com --json']
+  }
+];
 
 const eventsInputSchema = z.object({
   filter: z
@@ -27,7 +41,7 @@ const eventsInputSchema = z.object({
     .number()
     .int('--limit must be a positive integer')
     .positive('--limit must be a positive integer')
-    .max(300, '--limit must be 300 or less')
+    .max(100, '--limit must be 100 or less')
 });
 
 function eventSymbol(event: string): string {
@@ -113,10 +127,7 @@ export function registerEvents(program: Command): void {
       const runtime = resolveRuntime(cmd, { requireApiKey: true, requireDomain: true });
       const apiKey = runtime.apiKey!;
       const domain = runtime.domain!;
-      // Mailgun's events API expects a single `event` filter expression with
-      // types joined by OR; repeated `event` params match nothing.
-      const eventExpr = filter.join(' OR ');
-      const fetchParams = { apiKey, baseUrl: runtime.baseUrl, domain, eventExpr, limit };
+      const fetchParams = { apiKey, baseUrl: runtime.baseUrl, domain, eventTypes: filter, limit };
 
       if (opts.tail !== true) {
         const events = await fetchRecentEvents(fetchParams);

@@ -8,6 +8,33 @@ import {
 import { addApiOptions } from './shared-options.js';
 import { chalkFor, handleCommandError, printJSON, UsageError } from '../lib/cli/output.js';
 import { createSpinner } from '../lib/cli/spinner.js';
+import type { CommandDescriptor } from './descriptor.js';
+
+export const VALIDATE_EMAIL_DESCRIPTORS: CommandDescriptor[] = [
+  {
+    command: 'validate-email',
+    mode: 'read',
+    description: 'Validate a single email address',
+    product: 'Validate',
+    mcpTool: 'validate_email',
+    flags: ['--address', '--provider-lookup', '--region', '--json', '--quiet'],
+    outputFields: [
+      'address',
+      'result',
+      'risk',
+      'did_you_mean',
+      'reasons',
+      'engagement',
+      'is_disposable_address',
+      'is_role_address',
+      'data_gaps'
+    ],
+    examples: [
+      'mailgun validate-email --address user@example.com --json',
+      'mailgun validate-email user@example.com --json'
+    ]
+  }
+];
 
 // --provider-lookup requires an explicit true/false; anything else exits 2.
 export function parseProviderLookup(value: unknown): boolean | undefined {

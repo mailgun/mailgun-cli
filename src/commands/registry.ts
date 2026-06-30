@@ -1,123 +1,20 @@
-import type { ProductLabel } from '../lib/core/types.js';
+import { AGENT_CONTEXT_DESCRIPTORS } from './agent-context-descriptor.js';
+import type { CommandDescriptor } from './descriptor.js';
+import { EVENTS_DESCRIPTORS } from './events.js';
+import { INBOX_PLACEMENT_DESCRIPTORS } from './inbox-placement.js';
+import { METRICS_DESCRIPTORS } from './metrics.js';
+import { PREVIEW_DESCRIPTORS } from './preview.js';
+import { VALIDATE_EMAIL_DESCRIPTORS } from './validate-email.js';
 
 // Curated registry of durable PRODUCTION CLI commands. This represents the
-// supported CLI surface, not the set of Mailgun API endpoints. `agent-context`
-// is serialized directly from this registry, so adding a production command
-// means adding it here. Product labels should follow the source OpenAPI spec
-// boundary when a command wraps a single product API.
-
-export interface RegistryCommand {
-  command: string;
-  mode: 'read';
-  description: string;
-  product?: ProductLabel;
-  mcpTool?: string;
-  flags: string[];
-  outputFields: string[];
-  outputFormat?: string;
-  examples: string[];
-}
-
-export const COMMAND_REGISTRY: RegistryCommand[] = [
-  {
-    command: 'agent-context',
-    mode: 'read',
-    description: 'Return machine-readable CLI schema for agent introspection',
-    flags: [],
-    outputFields: ['schema_version', 'cli_version', 'name', 'description', 'auth', 'commands'],
-    examples: ['mailgun agent-context | jq .commands']
-  },
-  {
-    command: 'events',
-    mode: 'read',
-    description: 'Stream live delivery events',
-    product: 'Send',
-    flags: ['--tail', '--filter', '--interval', '--limit', '--domain', '--region', '--json', '--quiet'],
-    outputFormat: 'ndjson',
-    outputFields: ['timestamp', 'event', 'recipient', 'domain', 'reason', 'code', 'tags'],
-    examples: ['mailgun events --domain acme.com --tail', 'mailgun events --domain acme.com --json']
-  },
-  {
-    command: 'metrics summary',
-    mode: 'read',
-    description: 'Summarize sending metrics (counts and computed rates) for a domain and window',
-    product: 'Send',
-    mcpTool: 'get_metrics_summary',
-    flags: ['--domain', '--window', '--duration', '--start', '--end', '--timezone', '--region', '--json', '--quiet'],
-    outputFields: ['domain', 'metrics_raw', 'rates', 'data_gaps', 'window'],
-    examples: [
-      'mailgun metrics summary --domain acme.com --json',
-      'mailgun metrics summary --domain acme.com --duration 24h --json'
-    ]
-  },
-  {
-    command: 'validate-email',
-    mode: 'read',
-    description: 'Validate a single email address',
-    product: 'Validate',
-    mcpTool: 'validate_email',
-    flags: ['--address', '--provider-lookup', '--region', '--json', '--quiet'],
-    outputFields: [
-      'address',
-      'result',
-      'risk',
-      'did_you_mean',
-      'reasons',
-      'engagement',
-      'is_disposable_address',
-      'is_role_address',
-      'data_gaps'
-    ],
-    examples: [
-      'mailgun validate-email --address user@example.com --json',
-      'mailgun validate-email user@example.com --json'
-    ]
-  },
-  {
-    command: 'inbox-placement list',
-    mode: 'read',
-    description: 'List recent inbox placement result IDs',
-    product: 'Optimize',
-    flags: ['--limit', '--subject', '--sender', '--provider', '--region', '--json', '--quiet'],
-    outputFields: ['results', 'data_gaps'],
-    examples: [
-      'mailgun inbox-placement list --limit 10 --json',
-      'mailgun inbox-placement list --provider gmail.com --json'
-    ]
-  },
-  {
-    command: 'inbox-placement result',
-    mode: 'read',
-    description: 'Retrieve and summarize an inbox placement result',
-    product: 'Optimize',
-    mcpTool: 'get_inbox_placement_result',
-    flags: ['--result', '--provider', '--region', '--json', '--quiet'],
-    outputFields: ['result_id', 'status', 'subject', 'sender', 'placement', 'providers', 'spamassassin', 'data_gaps'],
-    examples: [
-      'mailgun inbox-placement result --result result_123 --json',
-      'mailgun inbox-placement result --result result_123 --provider gmail.com --json'
-    ]
-  },
-  {
-    command: 'preview list',
-    mode: 'read',
-    description: 'List recent email preview test IDs',
-    product: 'Inspect',
-    flags: ['--limit', '--subject', '--from-date', '--to-date', '--region', '--json', '--quiet'],
-    outputFields: ['tests', 'data_gaps'],
-    examples: [
-      'mailgun preview list --limit 10 --json',
-      'mailgun preview list --subject "June campaign" --json'
-    ]
-  },
-  {
-    command: 'preview result',
-    mode: 'read',
-    description: 'Retrieve and summarize an email preview result',
-    product: 'Inspect',
-    mcpTool: 'get_preview_result',
-    flags: ['--test-id', '--region', '--json', '--quiet'],
-    outputFields: ['test_id', 'status', 'summary', 'clients', 'content_checking', 'data_gaps'],
-    examples: ['mailgun preview result --test-id preview_123 --json']
-  }
+// supported CLI surface, not the set of Mailgun API endpoints. Command modules
+// own the descriptors beside their Commander registration; this module only
+// aggregates them for agent-context.
+export const COMMAND_REGISTRY: CommandDescriptor[] = [
+  ...AGENT_CONTEXT_DESCRIPTORS,
+  ...EVENTS_DESCRIPTORS,
+  ...METRICS_DESCRIPTORS,
+  ...VALIDATE_EMAIL_DESCRIPTORS,
+  ...INBOX_PLACEMENT_DESCRIPTORS,
+  ...PREVIEW_DESCRIPTORS
 ];

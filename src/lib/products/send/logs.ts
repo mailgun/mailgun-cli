@@ -13,15 +13,34 @@ export interface NormalizedEvent {
 
 interface EventsResponse {
   items?: unknown[];
-  paging?: { next?: string };
+  pagination?: { next?: string };
 }
 
 export interface EventsFetchParams {
   apiKey: string;
   baseUrl: string;
   domain: string;
-  eventExpr: string;
+  eventTypes: string[];
   limit: number;
+}
+
+export interface LogsRequestBody {
+  duration?: string;
+  start?: string;
+  end?: string;
+  events: string[];
+  filter: {
+    AND: Array<{
+      attribute: 'domain';
+      comparator: '=';
+      values: Array<{ label: string; value: string }>;
+    }>;
+  };
+  pagination: {
+    sort: 'timestamp:asc' | 'timestamp:desc';
+    token?: string;
+    limit: number;
+  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -38,6 +57,12 @@ function numberAt(value: unknown, path: string[]): number | null {
   let current: unknown = value;
   for (const segment of path) current = asRecord(current)[segment];
   return typeof current === 'number' && Number.isFinite(current) ? current : null;
+}
+
+function stringArrayAt(value: unknown, path: string[]): string[] | null {
+  let current: unknown = value;
+  for (const segment of path) current = asRecord(current)[segment];
+  return Array.isArray(current) ? current.filter((item): item is string => typeof item === 'string') : null;
 }
 
 export function normalizeTimestamp(value: unknown): string {
@@ -61,12 +86,15 @@ export function extractRecipient(event: unknown): string | null {
   return (
     stringAt(event, ['recipient']) ??
     stringAt(event, ['envelope', 'targets']) ??
-    stringAt(event, ['message', 'headers', 'to'])
+    stringAt(event, ['message', 'headers', 'to']) ??
+    stringArrayAt(event, ['message', 'recipients'])?.[0] ??
+    null
   );
 }
 
 export function extractReason(event: unknown): string | null {
   return (
+    stringAt(event, ['reason']) ??
     stringAt(event, ['delivery-status', 'message']) ??
     stringAt(event, ['delivery-status', 'description']) ??
     stringAt(event, ['reject', 'description']) ??
@@ -74,17 +102,21 @@ export function extractReason(event: unknown): string | null {
   );
 }
 
+function extractDomain(event: unknown, fallback?: string): string | undefined {
+  return stringAt(event, ['domain', 'name']) ?? stringAt(event, ['domain']) ?? fallback;
+}
+
 export function normalizeEvent(event: unknown, domain?: string): NormalizedEvent {
   const tags = asRecord(event).tags;
   return {
     id: stringAt(event, ['id']) ?? undefined,
-    timestamp: normalizeTimestamp(asRecord(event).timestamp),
+    timestamp: normalizeTimestamp(asRecord(event)['@timestamp'] ?? asRecord(event).timestamp),
     event: stringAt(event, ['event']) ?? 'unknown',
     recipient: extractRecipient(event),
     reason: extractReason(event),
     code: numberAt(event, ['delivery-status', 'code']),
     tags: Array.isArray(tags) ? tags.filter((tag): tag is string => typeof tag === 'string') : undefined,
-    domain
+    domain: extractDomain(event, domain)
   };
 }
 
@@ -92,33 +124,60 @@ export function tailDedupeKey(event: NormalizedEvent): string {
   return event.id ?? `${event.timestamp}|${event.event}|${event.recipient ?? ''}|${event.reason ?? ''}`;
 }
 
-export function eventsPath(domain: string): string {
-  return `/v3/${encodeURIComponent(domain)}/events`;
+export function logsPath(): string {
+  return '/v1/analytics/logs';
 }
 
-export function buildRecentEventsUrl(path: string, eventExpr: string, limit: number, baseUrl: string): string {
-  return buildMailgunUrl(path, { event: eventExpr, limit, ascending: 'no' }, baseUrl);
+export function buildLogsUrl(baseUrl: string): string {
+  return buildMailgunUrl(logsPath(), undefined, baseUrl);
 }
 
-export function buildForwardPollUrl(
-  path: string,
-  eventExpr: string,
-  beginSec: number,
-  limit: number,
-  baseUrl: string
-): string {
-  return buildMailgunUrl(path, { event: eventExpr, ascending: 'yes', begin: beginSec, limit }, baseUrl);
+export function toRfc2822Date(ms: number): string {
+  return new Date(ms).toUTCString();
+}
+
+export function buildLogsRequestBody(params: {
+  domain: string;
+  eventTypes: string[];
+  limit: number;
+  sort: 'timestamp:asc' | 'timestamp:desc';
+  duration?: string;
+  start?: string;
+  end?: string;
+  token?: string;
+}): LogsRequestBody {
+  return {
+    ...(params.duration !== undefined ? { duration: params.duration } : {}),
+    ...(params.start !== undefined ? { start: params.start } : {}),
+    ...(params.end !== undefined ? { end: params.end } : {}),
+    events: params.eventTypes,
+    filter: {
+      AND: [
+        {
+          attribute: 'domain',
+          comparator: '=',
+          values: [{ label: params.domain, value: params.domain }]
+        }
+      ]
+    },
+    pagination: {
+      sort: params.sort,
+      ...(params.token !== undefined ? { token: params.token } : {}),
+      limit: params.limit
+    }
+  };
 }
 
 async function fetchEventsPage(
   url: string,
   apiKey: string,
-  domain: string
+  domain: string,
+  body: LogsRequestBody
 ): Promise<{ events: NormalizedEvent[]; next?: string }> {
-  const response = await mailgunRequest<EventsResponse>(url, apiKey, 'events');
+  const response = await mailgunRequest<EventsResponse>(url, apiKey, 'logs', { method: 'POST', body });
   return {
     events: (response.items ?? []).map((event) => normalizeEvent(event, domain)),
-    next: response.paging?.next
+    next: response.pagination?.next
   };
 }
 
@@ -131,18 +190,24 @@ function maxEventTimestampMs(events: NormalizedEvent[], current = 0): number {
   return latestMs;
 }
 
-function beginSecFromMs(latestMs: number): number {
-  return latestMs > 0 ? Math.floor(latestMs / 1000) : Math.floor(Date.now() / 1000);
-}
-
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function fetchRecentEvents(params: EventsFetchParams): Promise<NormalizedEvent[]> {
-  const path = eventsPath(params.domain);
-  const url = buildRecentEventsUrl(path, params.eventExpr, params.limit, params.baseUrl);
-  const page = await fetchEventsPage(url, params.apiKey, params.domain);
+  const url = buildLogsUrl(params.baseUrl);
+  const page = await fetchEventsPage(
+    url,
+    params.apiKey,
+    params.domain,
+    buildLogsRequestBody({
+      domain: params.domain,
+      eventTypes: params.eventTypes,
+      limit: params.limit,
+      sort: 'timestamp:desc',
+      duration: '24h'
+    })
+  );
   return page.events;
 }
 
@@ -150,11 +215,21 @@ export async function tailEvents(
   params: EventsFetchParams & { interval: number },
   onEvent: (event: NormalizedEvent) => void
 ): Promise<void> {
-  const path = eventsPath(params.domain);
+  const url = buildLogsUrl(params.baseUrl);
   const dedupe = new Set<string>();
 
-  const backlogUrl = buildRecentEventsUrl(path, params.eventExpr, params.limit, params.baseUrl);
-  const backlog = await fetchEventsPage(backlogUrl, params.apiKey, params.domain);
+  const backlog = await fetchEventsPage(
+    url,
+    params.apiKey,
+    params.domain,
+    buildLogsRequestBody({
+      domain: params.domain,
+      eventTypes: params.eventTypes,
+      limit: params.limit,
+      sort: 'timestamp:desc',
+      duration: '24h'
+    })
+  );
   let latestMs = 0;
   for (const event of [...backlog.events].reverse()) {
     const key = tailDedupeKey(event);
@@ -165,12 +240,26 @@ export async function tailEvents(
     latestMs = maxEventTimestampMs([event], latestMs);
   }
 
-  let beginSec = beginSecFromMs(latestMs);
+  let pollStartMs = latestMs > 0 ? latestMs : Date.now();
   while (true) {
     await sleep(params.interval);
-    let pollUrl = buildForwardPollUrl(path, params.eventExpr, beginSec, params.limit, params.baseUrl);
+    const pollEndMs = Date.now();
+    let token: string | undefined;
     do {
-      const page = await fetchEventsPage(pollUrl, params.apiKey, params.domain);
+      const page = await fetchEventsPage(
+        url,
+        params.apiKey,
+        params.domain,
+        buildLogsRequestBody({
+          domain: params.domain,
+          eventTypes: params.eventTypes,
+          limit: params.limit,
+          sort: 'timestamp:asc',
+          start: toRfc2822Date(pollStartMs),
+          end: toRfc2822Date(pollEndMs),
+          token
+        })
+      );
       for (const event of page.events) {
         const key = tailDedupeKey(event);
         if (dedupe.has(key)) continue;
@@ -179,8 +268,8 @@ export async function tailEvents(
         latestMs = maxEventTimestampMs([event], latestMs);
       }
       if (!page.next) break;
-      pollUrl = page.next;
+      token = page.next;
     } while (true);
-    beginSec = beginSecFromMs(latestMs);
+    pollStartMs = latestMs > 0 ? latestMs : pollEndMs;
   }
 }
