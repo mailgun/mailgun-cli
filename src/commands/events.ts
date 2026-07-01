@@ -109,7 +109,7 @@ export function registerEvents(program: Command): void {
     .option('--limit <n>', 'recent events to fetch (initial backlog shown before --tail polls)', '10')
     .addHelpText(
       'after',
-      '\nExamples:\n  mailgun events --domain acme.com\n  mailgun events --domain acme.com --json\n  mailgun events --domain acme.com --tail\n  mailgun events --domain acme.com --tail --limit 5 --interval 5000\n'
+      '\nA single fetch returns the most recent --limit events from the last 24 hours.\n--tail shows that backlog first, then polls forward for new events only.\n\nExamples:\n  mailgun events --domain acme.com\n  mailgun events --domain acme.com --json\n  mailgun events --domain acme.com --tail\n  mailgun events --domain acme.com --tail --limit 5 --interval 5000\n'
     );
 
   addApiOptions(command, { domain: true });
