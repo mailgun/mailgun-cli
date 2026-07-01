@@ -50,9 +50,14 @@ export function truncateBody(text: string, maxLength = 500): string {
   return text.length <= maxLength ? text : `${text.slice(0, maxLength)}...`;
 }
 
+// Per-request timeout so a hung connection fails fast instead of blocking the
+// CLI indefinitely (notably the `events --tail` poll loop).
+export const DEFAULT_TIMEOUT_MS = 30_000;
+
 export interface MailgunRequestOptions {
   method?: 'GET' | 'POST';
   body?: unknown;
+  timeoutMs?: number;
 }
 
 export async function mailgunRequest<T>(
@@ -61,7 +66,9 @@ export async function mailgunRequest<T>(
   operation: string,
   options: MailgunRequestOptions = {}
 ): Promise<T> {
-  const { method = 'GET', body } = options;
+  const { method = 'GET', body, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response;
   try {
     response = await fetch(url, {
@@ -72,11 +79,17 @@ export async function mailgunRequest<T>(
         Accept: 'application/json',
         ...(body !== undefined ? { 'Content-Type': 'application/json' } : {})
       },
+      signal: controller.signal,
       ...(body !== undefined ? { body: JSON.stringify(body) } : {})
     });
   } catch (error) {
+    if (controller.signal.aborted) {
+      throw new CliError(`Mailgun ${operation} request timed out after ${timeoutMs}ms`);
+    }
     const message = error instanceof Error ? error.message : String(error);
     throw new CliError(`Failed to fetch Mailgun ${operation}: ${redact(message, apiKey)}`);
+  } finally {
+    clearTimeout(timer);
   }
 
   if (!response.ok) {
