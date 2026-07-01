@@ -20,7 +20,7 @@ test('request body includes metrics, aggregates, and domain filter', () => {
   assert.deepEqual(body.filter.AND[0].values, [{ label: 'acme.com', value: 'acme.com' }]);
 });
 
-test('request body defaults duration to 24h for MCP parity', () => {
+test('request body defaults duration to 24h', () => {
   const body = buildMetricsRequestBody({ domain: 'acme.com' }) as Record<string, any>;
   assert.equal(body.duration, '24h');
 });

@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
 
-// Add the common P0 API flags directly to an API subcommand so post-subcommand
+// Add the common API flags directly to an API subcommand so post-subcommand
 // flags parse correctly. These mirror the parent program globals so both forms
 // work: `mailgun <cmd> --api-key X` and `mailgun --api-key X <cmd>`.
 //

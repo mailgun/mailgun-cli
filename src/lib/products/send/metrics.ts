@@ -10,9 +10,9 @@ function normalizeWindowBound(value: string | undefined): string | null {
   return Number.isNaN(parsed) ? value : new Date(parsed).toISOString();
 }
 
-// CLI equivalent of the MCP `get_metrics_summary` primitive. Request body and
-// metric set are aligned with ../mailgun-mcp-server custom tool; output follows
-// the CLI's structured data_gaps convention rather than the MCP string array.
+// CLI equivalent of the Mailgun MCP server's `get_metrics_summary` tool. The
+// request body and metric set match that tool; output follows the CLI's
+// structured data_gaps convention rather than a plain string array.
 
 export const REQUIRED_METRICS = [
   'sent_count',

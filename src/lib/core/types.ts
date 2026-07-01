@@ -1,4 +1,4 @@
-// Shared cross-command types for the P0 parity surface.
+// Shared cross-command types used across the CLI command surface.
 
 // Product labels map a command to the Mailgun product entitlement it depends on.
 // When a command wraps one API endpoint, use the source OpenAPI spec as the

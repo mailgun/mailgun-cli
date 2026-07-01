@@ -4,7 +4,7 @@ import { buildMailgunUrl, mailgunRequest } from '../../core/mailgun.js';
 // Inspect Email Preview (v2) normalizers. List uses GET /v2/preview/tests; detail
 // uses GET /v2/preview/tests/{test_id}, which returns completed/processing/bounced
 // client-id arrays plus content_checking availability metadata. No per-client
-// detail endpoints, artifacts, or screenshots are fetched in P0.
+// detail endpoints, artifacts, or screenshots are fetched.
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : {};
