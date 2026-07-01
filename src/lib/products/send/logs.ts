@@ -133,7 +133,19 @@ export function buildLogsUrl(baseUrl: string): string {
 }
 
 export function toRfc2822Date(ms: number): string {
-  return new Date(ms).toUTCString();
+  const d = new Date(ms);
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const day = days[d.getUTCDay()];
+  const date = String(d.getUTCDate()).padStart(2, '0');
+  const month = months[d.getUTCMonth()];
+  const year = d.getUTCFullYear();
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  const ss = String(d.getUTCSeconds()).padStart(2, '0');
+  // Mailgun Logs expects RFC2822 with a numeric UTC offset (see OpenAPI examples),
+  // not the "GMT" suffix produced by Date#toUTCString().
+  return `${day}, ${date} ${month} ${year} ${hh}:${mm}:${ss} -0000`;
 }
 
 export function buildLogsRequestBody(params: {
@@ -240,10 +252,11 @@ export async function tailEvents(
     latestMs = maxEventTimestampMs([event], latestMs);
   }
 
-  let pollStartMs = latestMs > 0 ? latestMs : Date.now();
+  let pollStartMs = latestMs > 0 ? latestMs + 1 : Date.now();
   while (true) {
     await sleep(params.interval);
     const pollEndMs = Date.now();
+    if (pollStartMs >= pollEndMs) continue;
     let token: string | undefined;
     do {
       const page = await fetchEventsPage(
@@ -270,6 +283,6 @@ export async function tailEvents(
       if (!page.next) break;
       token = page.next;
     } while (true);
-    pollStartMs = latestMs > 0 ? latestMs : pollEndMs;
+    pollStartMs = latestMs > 0 ? latestMs + 1 : pollEndMs;
   }
 }

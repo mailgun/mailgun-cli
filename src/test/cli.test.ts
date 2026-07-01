@@ -108,6 +108,8 @@ test('events --tail shows a backlog (timestamp:desc) then polls forward (timesta
     assert.ok(poll, 'should issue a forward poll with timestamp:asc');
     assert.ok(poll!.start, 'forward poll should carry a start anchor');
     assert.ok(poll!.end, 'forward poll should carry an end anchor');
+    assert.match(poll!.start!, / -0000$/, 'forward poll start should use Mailgun Logs RFC2822 offset');
+    assert.match(poll!.end!, / -0000$/, 'forward poll end should use Mailgun Logs RFC2822 offset');
     assert.equal(poll!.pagination.limit, 10, 'forward poll should pass limit');
     assert.equal(bodies[0]!.pagination.sort, 'timestamp:desc');
 

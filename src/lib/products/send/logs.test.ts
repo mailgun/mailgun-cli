@@ -68,16 +68,17 @@ test('buildLogsRequestBody carries poll window and page token', () => {
     eventTypes: ['failed'],
     limit: 10,
     sort: 'timestamp:asc',
-    start: 'Fri, 19 Jun 2026 18:10:00 GMT',
-    end: 'Fri, 19 Jun 2026 18:11:00 GMT',
+    start: 'Fri, 19 Jun 2026 18:10:00 -0000',
+    end: 'Fri, 19 Jun 2026 18:11:00 -0000',
     token: 'page-2'
   });
 
-  assert.equal(body.start, 'Fri, 19 Jun 2026 18:10:00 GMT');
-  assert.equal(body.end, 'Fri, 19 Jun 2026 18:11:00 GMT');
+  assert.equal(body.start, 'Fri, 19 Jun 2026 18:10:00 -0000');
+  assert.equal(body.end, 'Fri, 19 Jun 2026 18:11:00 -0000');
   assert.deepEqual(body.pagination, { sort: 'timestamp:asc', token: 'page-2', limit: 10 });
 });
 
 test('toRfc2822Date formats poll cursors for Logs', () => {
-  assert.equal(toRfc2822Date(1781892600000), 'Fri, 19 Jun 2026 18:10:00 GMT');
+  assert.equal(toRfc2822Date(1781892600000), 'Fri, 19 Jun 2026 18:10:00 -0000');
+  assert.doesNotMatch(toRfc2822Date(1781892600000), / GMT$/);
 });
