@@ -1,4 +1,5 @@
 import { buildMailgunUrl, mailgunRequest } from '../../core/mailgun.js';
+import { toRfc2822Date } from '../../core/time.js';
 
 export interface NormalizedEvent {
   id?: string;
@@ -132,21 +133,7 @@ export function buildLogsUrl(baseUrl: string): string {
   return buildMailgunUrl(logsPath(), undefined, baseUrl);
 }
 
-export function toRfc2822Date(ms: number): string {
-  const d = new Date(ms);
-  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const day = days[d.getUTCDay()];
-  const date = String(d.getUTCDate()).padStart(2, '0');
-  const month = months[d.getUTCMonth()];
-  const year = d.getUTCFullYear();
-  const hh = String(d.getUTCHours()).padStart(2, '0');
-  const mm = String(d.getUTCMinutes()).padStart(2, '0');
-  const ss = String(d.getUTCSeconds()).padStart(2, '0');
-  // Mailgun Logs expects RFC2822 with a numeric UTC offset (see OpenAPI examples),
-  // not the "GMT" suffix produced by Date#toUTCString().
-  return `${day}, ${date} ${month} ${year} ${hh}:${mm}:${ss} -0000`;
-}
+export { toRfc2822Date };
 
 export function buildLogsRequestBody(params: {
   domain: string;

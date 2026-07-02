@@ -43,6 +43,13 @@ export function validateMetricsInput(opts: Record<string, unknown>): ResolvedMet
   if (window !== undefined && duration !== undefined) {
     throw new UsageError('--window and --duration cannot be used together');
   }
+  // A leading "-" inverts Mailgun's lookback window and causes an opaque API 400.
+  const durationValue = duration ?? window;
+  if (durationValue?.startsWith('-')) {
+    throw new UsageError(
+      `--duration/--window is already a lookback window ending now, so it must not start with "-" (got "${durationValue}"). Use e.g. --duration 7d for the last 7 days.`
+    );
+  }
   if ((start === undefined) !== (end === undefined)) {
     throw new UsageError('--start and --end must be used together');
   }
@@ -97,7 +104,10 @@ export function registerMetrics(program: Command): void {
     .command('summary')
     .description('Summarize sending metrics (counts and computed rates) for a domain and window')
     .option('--window <duration>', 'duration shorthand alias for --duration (e.g. 7d)')
-    .option('--duration <duration>', 'duration shorthand (e.g. 24h, 7d); defaults to 24h')
+    .option(
+      '--duration <duration>',
+      'lookback window ending now, as <number><unit> with unit m/h/d (e.g. 30m, 24h, 7d); no leading "-"; defaults to 24h'
+    )
     .option('--start <iso>', 'window start (ISO 8601); requires --end')
     .option('--end <iso>', 'window end (ISO 8601); requires --start')
     .option('--timezone <tz>', 'timezone for the window (e.g. America/New_York)')

@@ -137,6 +137,7 @@ Important invariants:
 - Defaults to `duration=24h`.
 - Supports `--window` as a CLI alias for `duration`.
 - Supports `--duration`, `--start`, `--end`, and `--timezone`.
+- `--start`/`--end` accept ISO 8601 (validated at the CLI boundary) and are converted to RFC 2822 before being sent to the Metrics API, which rejects ISO input with a 400. The shared conversion (`core/time.ts#toRfc2822Date`) is also used by `send/logs.ts` for the same reason.
 - Includes resolved single `domain` in output for provenance.
 - Output includes upstream metrics, computed rates, resolved domain, data gaps, and the requested window.
 

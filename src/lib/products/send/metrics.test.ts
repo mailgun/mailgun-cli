@@ -25,14 +25,14 @@ test('request body defaults duration to 24h', () => {
   assert.equal(body.duration, '24h');
 });
 
-test('request body uses start/end when both provided', () => {
+test('request body converts ISO 8601 start/end to RFC 2822 for the Metrics API', () => {
   const body = buildMetricsRequestBody({
     domain: 'acme.com',
     start: '2026-06-01T00:00:00Z',
     end: '2026-06-08T00:00:00Z'
   }) as Record<string, any>;
-  assert.equal(body.start, '2026-06-01T00:00:00Z');
-  assert.equal(body.end, '2026-06-08T00:00:00Z');
+  assert.equal(body.start, 'Mon, 01 Jun 2026 00:00:00 -0000');
+  assert.equal(body.end, 'Mon, 08 Jun 2026 00:00:00 -0000');
   assert.equal(body.duration, undefined);
 });
 
