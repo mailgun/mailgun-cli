@@ -1,5 +1,6 @@
 import type { DataGap } from '../../core/types.js';
 import { buildMailgunUrl, mailgunRequest } from '../../core/mailgun.js';
+import { toRfc2822Date } from '../../core/time.js';
 
 // Normalize an upstream window bound to an ISO 8601 string. The Send metrics
 // endpoint returns RFC1123-style dates (e.g. "Wed, 24 Jun 2026 00:00:00 +0000");
@@ -75,8 +76,9 @@ export function buildMetricsRequestBody(params: MetricsRequestParams): Record<st
   };
 
   if (params.start && params.end) {
-    body.start = params.start;
-    body.end = params.end;
+    // Metrics API rejects the ISO 8601 the CLI accepts from --start/--end.
+    body.start = toRfc2822Date(params.start);
+    body.end = toRfc2822Date(params.end);
   } else if (params.duration) {
     body.duration = params.duration;
   } else {

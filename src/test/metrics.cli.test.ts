@@ -63,6 +63,51 @@ test('metrics summary missing domain exits 2', async () => {
   assert.match(result.stderr, /--domain is required/);
 });
 
+test('metrics summary rejects a negative duration before calling the API', async () => {
+  const server = await startMockServer([{ method: 'POST', path: '/v1/analytics/metrics', json: METRICS_POPULATED }]);
+  try {
+    const result = await runCli(
+      ['metrics', 'summary', '--domain', 'acme.com', '--duration', '-7d', '--json'],
+      { MAILGUN_API_KEY: 'k' },
+      server.baseUrl
+    );
+    assert.equal(result.code, 2);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /must not start with "-"/);
+    assert.equal(server.requests.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test('metrics summary --start/--end sends RFC 2822 (not raw ISO) to the API', async () => {
+  const server = await startMockServer([{ method: 'POST', path: '/v1/analytics/metrics', json: METRICS_POPULATED }]);
+  try {
+    const result = await runCli(
+      [
+        'metrics',
+        'summary',
+        '--domain',
+        'acme.com',
+        '--start',
+        '2026-01-01T00:00:00Z',
+        '--end',
+        '2026-07-01T00:00:00Z',
+        '--json'
+      ],
+      { MAILGUN_API_KEY: 'k' },
+      server.baseUrl
+    );
+    assert.equal(result.code, 0);
+    assert.equal(server.requests.length, 1);
+    const body = JSON.parse(server.requests[0]!.body);
+    assert.equal(body.start, 'Thu, 01 Jan 2026 00:00:00 -0000');
+    assert.equal(body.end, 'Wed, 01 Jul 2026 00:00:00 -0000');
+  } finally {
+    await server.close();
+  }
+});
+
 test('metrics summary surfaces API 403 response, exit 1', async () => {
   const server = await startMockServer([
     { method: 'POST', path: '/v1/analytics/metrics', status: 403, json: { message: 'forbidden' } }

@@ -55,6 +55,7 @@ mailgun --domain acme.com metrics summary --json
 
 ```bash
 # Sending metrics summary (counts + computed rates; defaults to a 24h window)
+# --duration/--window is already a lookback ending now (<number><m|h|d>, e.g. 30m, 24h, 7d) — no leading "-"
 mailgun metrics summary --domain acme.com --json
 mailgun metrics summary --domain acme.com --duration 7d --json
 mailgun metrics summary --domain acme.com --start 2026-06-01T00:00:00Z --end 2026-06-08T00:00:00Z --json
