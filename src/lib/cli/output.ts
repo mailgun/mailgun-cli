@@ -5,10 +5,13 @@ import { Chalk } from 'chalk';
 //   2 = usage/config error (missing/invalid input, conflicting flags, missing key, bad region)
 export class CliError extends Error {
   readonly exitCode: number;
-  constructor(message: string, exitCode = 1) {
+  // Upstream HTTP status when this error came from a non-2xx API response.
+  readonly statusCode?: number;
+  constructor(message: string, exitCode = 1, statusCode?: number) {
     super(message);
     this.name = 'CliError';
     this.exitCode = exitCode;
+    this.statusCode = statusCode;
   }
 }
 

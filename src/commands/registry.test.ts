@@ -23,6 +23,7 @@ const ALLOWED_FLAGS = new Set([
   '--subject',
   '--tail',
   '--test-id',
+  '--timeout',
   '--timezone',
   '--to-date',
   '--window'

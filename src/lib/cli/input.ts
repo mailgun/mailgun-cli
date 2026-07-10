@@ -41,3 +41,18 @@ export function parseLimit(value: unknown, defaultValue = 10): number {
   }
   return parsed.data;
 }
+
+// Optional non-negative integer seconds for poll timeouts. Returns undefined
+// when omitted (the caller applies its default). 0 means "do not wait" - fetch
+// once and return whatever state is available.
+export function parseTimeoutSeconds(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'string' && !/^\d+$/.test(value.trim())) {
+    throw new UsageError('--timeout must be a non-negative integer number of seconds');
+  }
+  const parsed = z.number().int().min(0).max(600).safeParse(typeof value === 'string' ? Number(value) : value);
+  if (!parsed.success) {
+    throw new UsageError('--timeout must be a non-negative integer number of seconds (0-600)');
+  }
+  return parsed.data;
+}

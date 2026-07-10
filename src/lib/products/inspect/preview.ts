@@ -1,10 +1,9 @@
 import type { DataGap } from '../../core/types.js';
 import { buildMailgunUrl, mailgunRequest } from '../../core/mailgun.js';
 
-// Inspect Email Preview (v2) normalizers. List uses GET /v2/preview/tests; detail
-// uses GET /v2/preview/tests/{test_id}, which returns completed/processing/bounced
-// client-id arrays plus content_checking availability metadata. No per-client
-// detail endpoints, artifacts, or screenshots are fetched.
+// Inspect Email Preview (v2) list + client-catalog normalizers. The full
+// counts-and-references QA summary (render polling + structured-check counts)
+// lives in ./preview-qa.ts so it can stay aligned with the MCP composite.
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : {};
@@ -74,108 +73,6 @@ export function normalizePreviewList(response: unknown): PreviewListOutput {
     } satisfies PreviewTestSummary;
   });
   return { tests, data_gaps: [] };
-}
-
-// ---- result detail ----
-
-export type PreviewStatus = 'complete' | 'processing' | 'partial' | 'unknown';
-
-export interface PreviewClient {
-  id: string;
-  status: 'complete' | 'processing' | 'bounced';
-}
-
-export interface ContentCheck {
-  available: boolean;
-  href: string | null;
-}
-
-export interface PreviewResultOutput {
-  test_id: string;
-  status: PreviewStatus;
-  summary: { total_clients: number; complete: number; processing: number; bounced: number };
-  clients: PreviewClient[];
-  content_checking: {
-    link_validation: ContentCheck;
-    image_validation: ContentCheck;
-    accessibility: ContentCheck;
-    code_analysis: ContentCheck;
-  };
-  data_gaps: DataGap[];
-}
-
-export async function getPreviewResult(params: {
-  apiKey: string;
-  baseUrl: string;
-  testId: string;
-}): Promise<PreviewResultOutput> {
-  const url = buildMailgunUrl(`/v2/preview/tests/${encodeURIComponent(params.testId)}`, undefined, params.baseUrl);
-  const response = await mailgunRequest<unknown>(url, params.apiKey, 'preview result');
-  return normalizePreviewResult(params.testId, response);
-}
-
-// Derive a top-level status mechanically from the client arrays.
-export function derivePreviewStatus(complete: number, processing: number, bounced: number): PreviewStatus {
-  if (complete + processing + bounced === 0) return 'unknown';
-  if (processing > 0) return 'processing';
-  if (bounced > 0) return 'partial';
-  return 'complete';
-}
-
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
-}
-
-function contentCheck(node: unknown): ContentCheck {
-  const links = asRecord(asRecord(node).items).links;
-  const self = asRecord(links).self;
-  const href = typeof self === 'string' && self.length > 0 ? self : null;
-  return { available: href !== null, href };
-}
-
-export function normalizePreviewResult(testId: string, response: unknown): PreviewResultOutput {
-  const record = asRecord(response);
-  const completed = stringArray(record.completed);
-  const processing = stringArray(record.processing);
-  const bounced = stringArray(record.bounced);
-
-  const clients: PreviewClient[] = [
-    ...completed.map((id) => ({ id, status: 'complete' as const })),
-    ...processing.map((id) => ({ id, status: 'processing' as const })),
-    ...bounced.map((id) => ({ id, status: 'bounced' as const }))
-  ];
-
-  const status = derivePreviewStatus(completed.length, processing.length, bounced.length);
-  const cc = asRecord(record.content_checking);
-
-  const dataGaps: DataGap[] = [];
-  if (status === 'unknown') {
-    dataGaps.push({
-      code: 'preview_clients_unavailable',
-      product: 'Inspect',
-      message: 'No client rendering state was returned for this test.',
-      impact: 'Per-client completion status becomes available once the preview finishes processing.'
-    });
-  }
-
-  return {
-    test_id: typeof record.test_id === 'string' ? record.test_id : testId,
-    status,
-    summary: {
-      total_clients: clients.length,
-      complete: completed.length,
-      processing: processing.length,
-      bounced: bounced.length
-    },
-    clients,
-    content_checking: {
-      link_validation: contentCheck(cc.link_validation),
-      image_validation: contentCheck(cc.image_validation),
-      accessibility: contentCheck(cc.accessibility),
-      code_analysis: contentCheck(cc.code_analysis)
-    },
-    data_gaps: dataGaps
-  };
 }
 
 // ---- client catalog ----

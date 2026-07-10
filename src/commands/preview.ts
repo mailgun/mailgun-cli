@@ -1,14 +1,13 @@
 import { Command } from 'commander';
 import { mergedOpts, resolveRuntime } from '../lib/core/runtime.js';
-import { parseLimit, resolveRequiredArg } from '../lib/cli/input.js';
+import { parseLimit, parseTimeoutSeconds, resolveRequiredArg } from '../lib/cli/input.js';
 import {
   listPreviewTests,
-  getPreviewResult,
   listPreviewClients,
   type PreviewListOutput,
-  type PreviewResultOutput,
   type PreviewClientsOutput
 } from '../lib/products/inspect/preview.js';
+import { getPreviewQa, type PreviewQaOutput } from '../lib/products/inspect/preview-qa.js';
 import { addApiOptions } from './shared-options.js';
 import { chalkFor, handleCommandError, printError, printJSON } from '../lib/cli/output.js';
 import { createSpinner } from '../lib/cli/spinner.js';
@@ -30,12 +29,25 @@ export const PREVIEW_DESCRIPTORS: CommandDescriptor[] = [
   {
     command: 'preview result',
     mode: 'read',
-    description: 'Retrieve and summarize an email preview result',
+    description: 'Poll and summarize an email preview QA result',
     product: 'Inspect',
-    mcpTool: 'get_preview_result',
-    flags: ['--test-id', '--region', '--json', '--quiet'],
-    outputFields: ['test_id', 'status', 'summary', 'clients', 'content_checking', 'data_gaps'],
-    examples: ['mailgun preview result --test-id preview_123 --json']
+    mcpTool: 'get_email_preview_qa',
+    flags: ['--test-id', '--timeout', '--region', '--json', '--quiet'],
+    outputFields: [
+      'test_id',
+      'status',
+      'timed_out',
+      'summary',
+      'clients',
+      'checks',
+      'issue_counts',
+      'warnings',
+      'data_gaps'
+    ],
+    examples: [
+      'mailgun preview result --test-id preview_123 --json',
+      'mailgun preview result preview_123 --timeout 0 --json'
+    ]
   },
   {
     command: 'preview clients',
@@ -63,30 +75,30 @@ function printList(output: PreviewListOutput, opts: { json?: boolean; quiet?: bo
   }
 }
 
-function printResult(output: PreviewResultOutput, opts: { json?: boolean; quiet?: boolean }): void {
+function printResult(output: PreviewQaOutput, opts: { json?: boolean; quiet?: boolean }): void {
   const chalk = chalkFor(opts);
-  if (opts.quiet !== true) process.stdout.write(`${chalk.bold(`Preview - ${output.test_id}`)}\n\n`);
+  if (opts.quiet !== true) process.stdout.write(`${chalk.bold(`Preview QA - ${output.test_id}`)}\n\n`);
   const s = output.summary;
-  process.stdout.write(`  status      ${output.status}\n`);
-  process.stdout.write(`  total       ${s.total_clients}\n`);
-  process.stdout.write(`  complete    ${s.complete}\n`);
-  process.stdout.write(`  processing  ${s.processing}\n`);
-  process.stdout.write(`  bounced     ${s.bounced}\n`);
+  process.stdout.write(`  status      ${output.status}${output.timed_out ? ' (timed out)' : ''}\n`);
+  process.stdout.write(
+    `  clients     ${s.completed}/${s.total_clients} complete, ${s.processing} processing, ${s.bounced} bounced\n`
+  );
 
-  const bounced = output.clients.filter((c) => c.status === 'bounced');
-  if (bounced.length > 0) {
-    process.stdout.write('\n  bounced clients:\n');
-    for (const c of bounced) process.stdout.write(`    ${c.id}\n`);
-  } else {
-    const processing = output.clients.filter((c) => c.status === 'processing').slice(0, 5);
-    if (processing.length > 0) {
-      process.stdout.write('\n  processing clients:\n');
-      for (const c of processing) process.stdout.write(`    ${c.id}\n`);
-    }
+  const c = output.checks;
+  process.stdout.write('\n  checks:\n');
+  process.stdout.write(`    link_validation   ${c.link_validation.status.padEnd(13)} failures ${c.link_validation.failures}\n`);
+  process.stdout.write(`    image_validation  ${c.image_validation.status.padEnd(13)} failures ${c.image_validation.failures}\n`);
+  process.stdout.write(
+    `    accessibility     ${c.accessibility.status.padEnd(13)} failures ${c.accessibility.failures}, needs_review ${c.accessibility.needs_review}\n`
+  );
+  process.stdout.write(`    code_analysis     ${c.code_analysis.status.padEnd(13)} issues ${c.code_analysis.issues}\n`);
+  process.stdout.write(`\n  total issues ${output.issue_counts.total}\n`);
+
+  for (const w of output.warnings) {
+    process.stdout.write(`  ${chalk.dim(`warning: ${w.message ?? w.name ?? 'unknown'}`)}\n`);
   }
-
   for (const gap of output.data_gaps) process.stdout.write(`  ${chalk.dim(`data gap: ${gap.message}`)}\n`);
-  if (opts.quiet !== true) process.stdout.write('\n  (use --json for full client list)\n');
+  if (opts.quiet !== true) process.stdout.write('\n  (use --json for full counts and references)\n');
 }
 
 function printClients(output: PreviewClientsOutput, opts: { json?: boolean; quiet?: boolean }): void {
@@ -177,12 +189,13 @@ function registerList(parent: Command): void {
 function registerResult(parent: Command): void {
   const result = parent
     .command('result')
-    .description('Retrieve and summarize an email preview result')
+    .description('Poll and summarize an email preview QA result')
     .argument('[test_id]', 'email preview test ID (alternative to --test-id)')
     .option('--test-id <test_id>', 'email preview test ID (canonical)')
+    .option('--timeout <seconds>', 'max seconds to poll for the render/checks to settle (0-600, default 120)')
     .addHelpText(
       'after',
-      '\nExamples:\n  mailgun preview result preview_123 --json\n  mailgun preview result --test-id preview_123 --json\n'
+      '\nExamples:\n  mailgun preview result preview_123 --json\n  mailgun preview result --test-id preview_123 --json\n  mailgun preview result preview_123 --timeout 0 --json\n'
     );
 
   addApiOptions(result);
@@ -197,13 +210,15 @@ function registerResult(parent: Command): void {
         flagName: '--test-id',
         missingMessage: "a test id is required (positional or --test-id; get one from 'mailgun preview list')"
       });
+      const timeoutSeconds = parseTimeoutSeconds(opts.timeout);
       const runtime = resolveRuntime(command, { requireApiKey: true });
 
-      spinner.start('Fetching preview result...');
-      const output = await getPreviewResult({
+      spinner.start('Polling preview QA...');
+      const output = await getPreviewQa({
         apiKey: runtime.apiKey!,
         baseUrl: runtime.baseUrl,
-        testId
+        testId,
+        timeoutSeconds
       });
       spinner.stop();
 

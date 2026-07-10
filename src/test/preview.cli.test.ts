@@ -1,8 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startMockServer, runCli } from './mock-server.js';
-import { PREVIEW_LIST, PREVIEW_LIST_EMPTY, PREVIEW_RESULT_PARTIAL, PREVIEW_RESULT_PROCESSING, PREVIEW_403 } from '../fixtures/inspect.js';
-import { CLIENTS_CATALOG } from '../fixtures/email-preview-qa-contract.js';
+import { PREVIEW_LIST, PREVIEW_LIST_EMPTY, PREVIEW_403 } from '../fixtures/inspect.js';
+import {
+  RENDER_COMPLETE,
+  RENDER_PROCESSING,
+  LINK_RESULT,
+  IMAGE_RESULT,
+  ACCESSIBILITY_RESULT,
+  CODE_ANALYSIS_RESULT,
+  CLIENTS_CATALOG
+} from '../fixtures/email-preview-qa-contract.js';
+
+const STATUS_PATH = '/v2/preview/tests/preview_test_001';
+
+// Routes that resolve the four referenced structured-check results for a
+// complete render (ids come from CHECK_REFS_ALL inside RENDER_COMPLETE).
+const RESULT_ROUTES = [
+  { method: 'GET', path: '/v1/inspect/links/link_001', json: LINK_RESULT },
+  { method: 'GET', path: '/v1/inspect/images/image_001', json: IMAGE_RESULT },
+  { method: 'GET', path: '/v1/inspect/accessibility/access_001', json: ACCESSIBILITY_RESULT },
+  { method: 'GET', path: '/v1/inspect/analyze/preview_test_001', json: CODE_ANALYSIS_RESULT }
+];
 
 test('preview list success: limit maps to results query param', async () => {
   const server = await startMockServer([{ method: 'GET', path: '/v2/preview/tests', json: PREVIEW_LIST }]);
@@ -31,40 +50,58 @@ test('preview list empty exits 0 with tests: []', async () => {
   }
 });
 
-test('preview result partial exits 0 with all clients in JSON', async () => {
-  const server = await startMockServer([{ method: 'GET', path: '/v2/preview/tests/', json: PREVIEW_RESULT_PARTIAL }]);
+test('preview result (complete) summarizes QA counts and references', async () => {
+  const server = await startMockServer([
+    { method: 'GET', path: STATUS_PATH, json: RENDER_COMPLETE },
+    ...RESULT_ROUTES
+  ]);
   try {
-    const result = await runCli(['preview', 'result', '--test-id', 'preview_123', '--json'], { MAILGUN_API_KEY: 'k' }, server.baseUrl);
+    const result = await runCli(['preview', 'result', 'preview_test_001', '--json'], { MAILGUN_API_KEY: 'k' }, server.baseUrl);
     assert.equal(result.code, 0);
     const json = JSON.parse(result.stdout);
-    assert.equal(json.status, 'partial');
-    assert.equal(json.clients.length, 3);
-    assert.equal(server.requests[0]!.path, '/v2/preview/tests/preview_123');
+    assert.equal(json.status, 'complete');
+    assert.equal(json.timed_out, false);
+    assert.equal(json.summary.completed, 3);
+    assert.equal(json.checks.link_validation.failures, 2);
+    assert.equal(json.checks.code_analysis.status, 'complete');
+    assert.equal(json.issue_counts.total, 5);
+    assert.ok(json.data_gaps.some((g: { code: string }) => g.code === 'code_analysis_count_formula_unsupported'));
+    assert.equal(server.requests[0]!.path, STATUS_PATH);
   } finally {
     await server.close();
   }
 });
 
-test('preview result processing exits 0', async () => {
-  const server = await startMockServer([{ method: 'GET', path: '/v2/preview/tests/', json: PREVIEW_RESULT_PROCESSING }]);
+test('preview result --timeout 0 while processing returns timed_out', async () => {
+  const server = await startMockServer([{ method: 'GET', path: STATUS_PATH, json: RENDER_PROCESSING }]);
   try {
-    const result = await runCli(['preview', 'result', '--test-id', 'preview_123', '--json'], { MAILGUN_API_KEY: 'k' }, server.baseUrl);
+    const result = await runCli(['preview', 'result', 'preview_test_001', '--timeout', '0', '--json'], { MAILGUN_API_KEY: 'k' }, server.baseUrl);
     assert.equal(result.code, 0);
-    assert.equal(JSON.parse(result.stdout).status, 'processing');
+    const json = JSON.parse(result.stdout);
+    assert.equal(json.status, 'processing');
+    assert.equal(json.timed_out, true);
+    assert.equal(json.checks.link_validation.status, 'processing');
+    assert.ok(json.data_gaps.some((g: { code: string }) => g.code === 'workflow_timed_out'));
   } finally {
     await server.close();
   }
 });
 
 test('preview result accepts a positional test id', async () => {
-  const server = await startMockServer([{ method: 'GET', path: '/v2/preview/tests/', json: PREVIEW_RESULT_PARTIAL }]);
+  const server = await startMockServer([{ method: 'GET', path: STATUS_PATH, json: RENDER_COMPLETE }, ...RESULT_ROUTES]);
   try {
-    const result = await runCli(['preview', 'result', 'preview_123', '--json'], { MAILGUN_API_KEY: 'k' }, server.baseUrl);
+    const result = await runCli(['preview', 'result', 'preview_test_001', '--json'], { MAILGUN_API_KEY: 'k' }, server.baseUrl);
     assert.equal(result.code, 0);
-    assert.equal(server.requests[0]!.path, '/v2/preview/tests/preview_123');
+    assert.equal(server.requests[0]!.path, STATUS_PATH);
   } finally {
     await server.close();
   }
+});
+
+test('preview result rejects a non-numeric --timeout (exit 2)', async () => {
+  const result = await runCli(['preview', 'result', 'preview_test_001', '--timeout', 'soon', '--json'], { MAILGUN_API_KEY: 'k' });
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /--timeout must be a non-negative integer/);
 });
 
 test('preview result conflicting positional/flag exits 2', async () => {
