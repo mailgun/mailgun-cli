@@ -4,12 +4,13 @@ import { pollPreviewQa, buildPreviewQaOutput, type PollDeps } from './preview-qa
 import { CliError } from '../../cli/output.js';
 import {
   RENDER_COMPLETE,
-  RENDER_PROCESSING,
+  RENDER_STRAGGLER,
   RENDER_CHECK_LIFECYCLE,
   LINK_RESULT,
   IMAGE_RESULT,
   ACCESSIBILITY_RESULT,
-  CODE_ANALYSIS_RESULT
+  CODE_ANALYSIS_RESULT,
+  CODE_ANALYSIS_PROCESSING
 } from '../../../fixtures/email-preview-qa-contract.js';
 
 type Route = unknown | (() => unknown);
@@ -39,7 +40,7 @@ const RESULT_ROUTES = {
   '/v1/inspect/links/link_001': LINK_RESULT,
   '/v1/inspect/images/image_001': IMAGE_RESULT,
   '/v1/inspect/accessibility/access_001': ACCESSIBILITY_RESULT,
-  '/v1/inspect/analyze/preview_test_001': CODE_ANALYSIS_RESULT
+  '/v1/inspect/analyze/code_001': CODE_ANALYSIS_RESULT
 };
 
 async function run(routes: Record<string, Route>, timeoutMs: number) {
@@ -61,34 +62,57 @@ test('complete render fetches every referenced result', async () => {
   assert.equal(output.timed_out, false);
   assert.equal(output.checks.link_validation.status, 'complete');
   assert.equal(output.checks.code_analysis.status, 'complete');
-  assert.equal(output.issue_counts.total, 5);
-  assert.ok(requests.includes('GET /v1/inspect/analyze/preview_test_001'));
+  assert.equal(output.issue_counts.total, 6);
+  assert.ok(requests.includes('GET /v1/inspect/analyze/code_001'));
 });
 
-test('polls while processing then settles to complete', async () => {
-  let calls = 0;
+test('polls while a CHECK is still processing, then settles to complete', async () => {
+  let analyzeCalls = 0;
   const { output, requests } = await run(
     {
-      [STATUS_PATH]: () => {
-        calls += 1;
-        return calls >= 3 ? RENDER_COMPLETE : RENDER_PROCESSING;
-      },
-      ...RESULT_ROUTES
+      // Render is done immediately; the code-analysis CHECK lags, so polling is
+      // driven by the check, not the render.
+      [STATUS_PATH]: RENDER_COMPLETE,
+      '/v1/inspect/links/link_001': LINK_RESULT,
+      '/v1/inspect/images/image_001': IMAGE_RESULT,
+      '/v1/inspect/accessibility/access_001': ACCESSIBILITY_RESULT,
+      '/v1/inspect/analyze/code_001': () => {
+        analyzeCalls += 1;
+        return analyzeCalls >= 3 ? CODE_ANALYSIS_RESULT : CODE_ANALYSIS_PROCESSING;
+      }
     },
     60_000
   );
   assert.equal(output.status, 'complete');
   assert.equal(output.timed_out, false);
+  assert.equal(output.checks.code_analysis.status, 'complete');
   assert.ok(requests.filter((r) => r === `GET ${STATUS_PATH}`).length >= 3);
 });
 
-test('times out while processing and does not fetch results', async () => {
-  const { output, requests } = await run({ [STATUS_PATH]: RENDER_PROCESSING, ...RESULT_ROUTES }, 10_000);
-  assert.equal(output.status, 'processing');
+test('a slow render client does NOT block; returns with render_incomplete', async () => {
+  const { output, requests } = await run({ [STATUS_PATH]: RENDER_STRAGGLER, ...RESULT_ROUTES }, 30_000);
+  assert.equal(output.timed_out, false);
+  assert.equal(output.checks.link_validation.status, 'complete');
+  assert.equal(output.summary.processing, 1);
+  assert.ok(output.data_gaps.some((g) => g.code === 'render_incomplete'));
+  assert.equal(requests.filter((r) => r === `GET ${STATUS_PATH}`).length, 1);
+});
+
+test('times out when a CHECK never settles (render is irrelevant)', async () => {
+  const { output } = await run(
+    {
+      [STATUS_PATH]: RENDER_COMPLETE,
+      '/v1/inspect/links/link_001': LINK_RESULT,
+      '/v1/inspect/images/image_001': IMAGE_RESULT,
+      '/v1/inspect/accessibility/access_001': ACCESSIBILITY_RESULT,
+      '/v1/inspect/analyze/code_001': CODE_ANALYSIS_PROCESSING
+    },
+    10_000
+  );
   assert.equal(output.timed_out, true);
-  assert.equal(output.checks.link_validation.status, 'processing');
+  assert.equal(output.checks.code_analysis.status, 'processing');
+  assert.equal(output.checks.link_validation.status, 'complete');
   assert.ok(output.data_gaps.some((g) => g.code === 'workflow_timed_out'));
-  assert.ok(!requests.some((r) => r.startsWith('GET /v1/inspect/')));
 });
 
 test('unexpected 404 on a result endpoint marks the check unavailable', async () => {

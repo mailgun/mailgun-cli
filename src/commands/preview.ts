@@ -193,7 +193,7 @@ function printResult(output: PreviewQaOutput, opts: { json?: boolean; quiet?: bo
   process.stdout.write(
     `    accessibility     ${c.accessibility.status.padEnd(13)} failures ${c.accessibility.failures}, needs_review ${c.accessibility.needs_review}\n`
   );
-  process.stdout.write(`    code_analysis     ${c.code_analysis.status.padEnd(13)} issues ${c.code_analysis.issues}\n`);
+  process.stdout.write(`    code_analysis     ${c.code_analysis.status.padEnd(13)} features ${c.code_analysis.count} (${c.code_analysis.instances} instances)\n`);
   process.stdout.write(`\n  total issues ${output.issue_counts.total}\n`);
 
   for (const w of output.warnings) {

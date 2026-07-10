@@ -13,6 +13,7 @@ import {
   IMAGE_RESULT,
   ACCESSIBILITY_RESULT,
   CODE_ANALYSIS_RESULT,
+  CODE_ANALYSIS_PROCESSING,
   CLIENTS_CATALOG
 } from '../fixtures/email-preview-qa-contract.js';
 
@@ -35,7 +36,7 @@ const RESULT_ROUTES = [
   { method: 'GET', path: '/v1/inspect/links/link_001', json: LINK_RESULT },
   { method: 'GET', path: '/v1/inspect/images/image_001', json: IMAGE_RESULT },
   { method: 'GET', path: '/v1/inspect/accessibility/access_001', json: ACCESSIBILITY_RESULT },
-  { method: 'GET', path: '/v1/inspect/analyze/preview_test_001', json: CODE_ANALYSIS_RESULT }
+  { method: 'GET', path: '/v1/inspect/analyze/code_001', json: CODE_ANALYSIS_RESULT }
 ];
 
 test('preview list success: limit maps to results query param', async () => {
@@ -79,23 +80,32 @@ test('preview result (complete) summarizes QA counts and references', async () =
     assert.equal(json.summary.completed, 3);
     assert.equal(json.checks.link_validation.failures, 2);
     assert.equal(json.checks.code_analysis.status, 'complete');
-    assert.equal(json.issue_counts.total, 5);
-    assert.ok(json.data_gaps.some((g: { code: string }) => g.code === 'code_analysis_count_formula_unsupported'));
+    assert.equal(json.checks.code_analysis.count, 2);
+    assert.equal(json.issue_counts.total, 6);
+    assert.ok(!json.data_gaps.some((g: { code: string }) => g.code === 'code_analysis_count_formula_unsupported'));
     assert.equal(server.requests[0]!.path, STATUS_PATH);
   } finally {
     await server.close();
   }
 });
 
-test('preview result --timeout 0 while processing returns timed_out', async () => {
-  const server = await startMockServer([{ method: 'GET', path: STATUS_PATH, json: RENDER_PROCESSING }]);
+test('preview result --timeout 0 times out on a lagging CHECK (not the render)', async () => {
+  // Render is complete and link/image/a11y resolve, but the code-analysis check
+  // is still Processing, so the workflow times out on the check.
+  const server = await startMockServer([
+    { method: 'GET', path: STATUS_PATH, json: RENDER_COMPLETE },
+    { method: 'GET', path: '/v1/inspect/links/link_001', json: LINK_RESULT },
+    { method: 'GET', path: '/v1/inspect/images/image_001', json: IMAGE_RESULT },
+    { method: 'GET', path: '/v1/inspect/accessibility/access_001', json: ACCESSIBILITY_RESULT },
+    { method: 'GET', path: '/v1/inspect/analyze/code_001', json: CODE_ANALYSIS_PROCESSING }
+  ]);
   try {
     const result = await runCli(['preview', 'result', 'preview_test_001', '--timeout', '0', '--json'], { MAILGUN_API_KEY: 'k' }, server.baseUrl);
     assert.equal(result.code, 0);
     const json = JSON.parse(result.stdout);
-    assert.equal(json.status, 'processing');
     assert.equal(json.timed_out, true);
-    assert.equal(json.checks.link_validation.status, 'processing');
+    assert.equal(json.checks.code_analysis.status, 'processing');
+    assert.equal(json.checks.link_validation.status, 'complete');
     assert.ok(json.data_gaps.some((g: { code: string }) => g.code === 'workflow_timed_out'));
   } finally {
     await server.close();
@@ -224,7 +234,7 @@ test('preview run --yes issues exactly one POST then polls to a complete summary
     const json = JSON.parse(result.stdout);
     assert.equal(json.test_id, 'preview_test_001');
     assert.equal(json.status, 'complete');
-    assert.equal(json.issue_counts.total, 5);
+    assert.equal(json.issue_counts.total, 6);
   } finally {
     await server.close();
     file.cleanup();

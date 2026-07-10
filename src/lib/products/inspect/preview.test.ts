@@ -16,6 +16,7 @@ import {
   RENDER_COMPLETE,
   RENDER_PROCESSING,
   RENDER_PARTIAL,
+  RENDER_STRAGGLER,
   RENDER_EMPTY,
   RENDER_CHECK_REFERENCE_MISSING,
   LINK_RESULT,
@@ -89,22 +90,24 @@ test('image validation counts', () => {
   assert.deepEqual(c.by_severity, { moderate: 1 });
 });
 
-test('accessibility keeps failures and needs_review separate', () => {
+test('accessibility counts instances (headline) and rules (secondary)', () => {
   const c = countAccessibilityIssues(ACCESSIBILITY_RESULT);
-  assert.equal(c.failures, 2);
+  assert.equal(c.failures, 3);
+  assert.equal(c.failure_rules, 2);
   assert.equal(c.needs_review, 1);
-  assert.deepEqual(c.failures_by_severity, { serious: 1, critical: 1 });
+  assert.equal(c.needs_review_rules, 1);
+  assert.deepEqual(c.failures_by_severity, { serious: 2, critical: 1 });
   assert.deepEqual(c.needs_review_by_severity, { moderate: 1 });
 });
 
-test('code analysis counts instances/support and flags an unconfirmed formula', () => {
+test('code analysis uses meta.count and passes support aggregates through', () => {
   const c = countCodeAnalysisIssues(CODE_ANALYSIS_RESULT);
-  assert.equal(c.issues, 3);
-  assert.deepEqual(c.by_feature, { 'font-size': 2, 'target-attribute': 1 });
-  assert.deepEqual(c.by_support_type, { y: 3, a: 1, n: 2, u: 1 });
-  assert.deepEqual(c.by_client, { outlook_win: 2, lotus_notes: 1 });
-  assert.deepEqual(c.by_application, {});
-  assert.equal(c.formula_unconfirmed, true);
+  assert.equal(c.count, 2);
+  assert.equal(c.instances, 3);
+  assert.deepEqual(c.by_feature, { 'html-width': 2, 'target-attribute': 1 });
+  assert.deepEqual(c.application_support, CODE_ANALYSIS_RESULT.meta.application_support);
+  assert.deepEqual(c.inbox_provider_support, CODE_ANALYSIS_RESULT.meta.inbox_provider_support);
+  assert.deepEqual(c.market_support, CODE_ANALYSIS_RESULT.meta.market_support);
 });
 
 // ---- QA output builder ----
@@ -131,15 +134,41 @@ test('complete render aggregates counts and references', () => {
   assert.deepEqual(out.summary, { total_clients: 3, completed: 3, processing: 0, bounced: 0 });
   assert.equal(out.checks.link_validation.status, 'complete');
   assert.equal(out.checks.link_validation.result_id, 'link_001');
+  assert.equal(out.checks.accessibility.failures, 3);
   assert.equal(out.checks.accessibility.needs_review, 1);
-  assert.equal(out.issue_counts.total, 5);
+  assert.equal(out.checks.code_analysis.count, 2);
+  assert.equal(out.checks.code_analysis.instances, 3);
+  assert.equal(out.issue_counts.total, 6);
   assert.deepEqual(out.issue_counts.by_check, {
     link_validation: 2,
     image_validation: 1,
-    accessibility: 2
+    accessibility: 3
   });
-  assert.deepEqual(out.issue_counts.by_severity, { critical: 2, unknown: 1, moderate: 1, serious: 1 });
-  assert.ok(out.data_gaps.some((g) => g.code === 'code_analysis_count_formula_unsupported'));
+  assert.deepEqual(out.issue_counts.by_severity, { critical: 2, unknown: 1, moderate: 1, serious: 2 });
+  // The code-analysis formula gate is resolved (meta.count); no such data gap.
+  assert.ok(!out.data_gaps.some((g) => g.code === 'code_analysis_count_formula_unsupported'));
+  assert.deepEqual(out.data_gaps, []);
+});
+
+test('render straggler does not block; reported as render_incomplete', () => {
+  const refs = extractCheckResultIds(RENDER_STRAGGLER);
+  const out = buildPreviewQaOutput({
+    testId: 'preview_test_001',
+    render: RENDER_STRAGGLER,
+    refs,
+    fetches: {
+      link_validation: okFetch(LINK_RESULT),
+      image_validation: okFetch(IMAGE_RESULT),
+      accessibility: okFetch(ACCESSIBILITY_RESULT),
+      code_analysis: okFetch(CODE_ANALYSIS_RESULT)
+    },
+    timedOut: false
+  });
+  assert.equal(out.timed_out, false);
+  assert.equal(out.summary.processing, 1);
+  assert.equal(out.checks.link_validation.status, 'complete');
+  assert.ok(out.data_gaps.some((g) => g.code === 'render_incomplete'));
+  assert.ok(!out.data_gaps.some((g) => g.code === 'workflow_timed_out'));
 });
 
 test('missing reference yields unavailable + data gap; not_requested stays', () => {
