@@ -241,7 +241,7 @@ test('agent-context lists all production commands and excludes retired health/in
   const keys = Object.keys(ctx.commands);
   assert.deepEqual(
     keys,
-    ['agent-context', 'events', 'inbox-placement list', 'inbox-placement result', 'metrics summary', 'preview list', 'preview result', 'validate-email']
+    ['agent-context', 'events', 'inbox-placement list', 'inbox-placement result', 'metrics summary', 'preview clients', 'preview list', 'preview result', 'validate-email']
   );
   assert.ok(!keys.includes('health'));
   assert.ok(!keys.includes('investigate'));

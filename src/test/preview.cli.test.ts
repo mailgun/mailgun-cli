@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startMockServer, runCli } from './mock-server.js';
 import { PREVIEW_LIST, PREVIEW_LIST_EMPTY, PREVIEW_RESULT_PARTIAL, PREVIEW_RESULT_PROCESSING, PREVIEW_403 } from '../fixtures/inspect.js';
+import { CLIENTS_CATALOG } from '../fixtures/email-preview-qa-contract.js';
 
 test('preview list success: limit maps to results query param', async () => {
   const server = await startMockServer([{ method: 'GET', path: '/v2/preview/tests', json: PREVIEW_LIST }]);
@@ -76,6 +77,30 @@ test('preview result missing id exits 2 with actionable message', async () => {
   const result = await runCli(['preview', 'result', '--json'], { MAILGUN_API_KEY: 'k' });
   assert.equal(result.code, 2);
   assert.match(result.stderr, /a test id is required/);
+});
+
+test('preview clients normalizes the catalog', async () => {
+  const server = await startMockServer([{ method: 'GET', path: '/v1/preview/tests/clients', json: CLIENTS_CATALOG }]);
+  try {
+    const result = await runCli(['preview', 'clients', '--json'], { MAILGUN_API_KEY: 'k' }, server.baseUrl);
+    assert.equal(result.code, 0);
+    assert.equal(server.requests[0]!.path, '/v1/preview/tests/clients');
+    const json = JSON.parse(result.stdout);
+    assert.ok(Array.isArray(json.clients));
+    assert.equal(json.clients.length, 4);
+    assert.equal(json.clients[0].id, 'apple_mail');
+    const gmail = json.clients.find((c: { id: string }) => c.id === 'gmail_chrome');
+    assert.equal(gmail.default, true);
+    assert.deepEqual(json.data_gaps, []);
+  } finally {
+    await server.close();
+  }
+});
+
+test('preview clients requires an api key (exit 2)', async () => {
+  const result = await runCli(['preview', 'clients', '--json'], {});
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /MAILGUN_API_KEY/);
 });
 
 test('preview 403 surfaces API response', async () => {

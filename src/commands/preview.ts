@@ -4,8 +4,10 @@ import { parseLimit, resolveRequiredArg } from '../lib/cli/input.js';
 import {
   listPreviewTests,
   getPreviewResult,
+  listPreviewClients,
   type PreviewListOutput,
-  type PreviewResultOutput
+  type PreviewResultOutput,
+  type PreviewClientsOutput
 } from '../lib/products/inspect/preview.js';
 import { addApiOptions } from './shared-options.js';
 import { chalkFor, handleCommandError, printError, printJSON } from '../lib/cli/output.js';
@@ -34,6 +36,16 @@ export const PREVIEW_DESCRIPTORS: CommandDescriptor[] = [
     flags: ['--test-id', '--region', '--json', '--quiet'],
     outputFields: ['test_id', 'status', 'summary', 'clients', 'content_checking', 'data_gaps'],
     examples: ['mailgun preview result --test-id preview_123 --json']
+  },
+  {
+    command: 'preview clients',
+    mode: 'read',
+    description: 'List email clients available for preview tests',
+    product: 'Inspect',
+    mcpTool: 'list_preview_clients',
+    flags: ['--region', '--json', '--quiet'],
+    outputFields: ['clients', 'data_gaps'],
+    examples: ['mailgun preview clients --json']
   }
 ];
 
@@ -75,6 +87,52 @@ function printResult(output: PreviewResultOutput, opts: { json?: boolean; quiet?
 
   for (const gap of output.data_gaps) process.stdout.write(`  ${chalk.dim(`data gap: ${gap.message}`)}\n`);
   if (opts.quiet !== true) process.stdout.write('\n  (use --json for full client list)\n');
+}
+
+function printClients(output: PreviewClientsOutput, opts: { json?: boolean; quiet?: boolean }): void {
+  const chalk = chalkFor(opts);
+  if (output.clients.length === 0) {
+    if (opts.quiet !== true) process.stdout.write('No preview clients were returned.\n');
+    for (const gap of output.data_gaps) process.stdout.write(`  ${chalk.dim(`data gap: ${gap.message}`)}\n`);
+    return;
+  }
+  for (const c of output.clients) {
+    const tags = [c.default ? 'default' : null, c.free ? 'free' : null].filter(Boolean).join(', ');
+    process.stdout.write(`${chalk.bold(c.id)}${tags ? chalk.dim(`  (${tags})`) : ''}\n`);
+    process.stdout.write(`  client    ${c.client ?? '-'}\n`);
+    process.stdout.write(`  os        ${c.os ?? '-'}\n`);
+    process.stdout.write(`  category  ${c.category ?? '-'}\n`);
+  }
+  if (opts.quiet !== true) process.stdout.write(`\n  ${output.clients.length} client(s). Pass these IDs to --clients on a preview test.\n`);
+}
+
+function registerClients(parent: Command): void {
+  const clients = parent
+    .command('clients')
+    .description('List email clients available for preview tests')
+    .addHelpText('after', '\nExamples:\n  mailgun preview clients --json\n');
+
+  addApiOptions(clients);
+
+  clients.action(async (_options, command: Command) => {
+    const spinner = createSpinner(mergedOpts(command));
+    try {
+      const runtime = resolveRuntime(command, { requireApiKey: true });
+
+      spinner.start('Fetching preview clients...');
+      const output = await listPreviewClients({
+        apiKey: runtime.apiKey!,
+        baseUrl: runtime.baseUrl
+      });
+      spinner.stop();
+
+      if (runtime.json) printJSON(output);
+      else printClients(output, runtime);
+    } catch (error) {
+      spinner.fail();
+      handleCommandError(error);
+    }
+  });
 }
 
 function registerList(parent: Command): void {
@@ -162,9 +220,10 @@ export function registerPreview(program: Command): void {
   const preview = program.command('preview').description('Email preview (Inspect) commands');
   registerList(preview);
   registerResult(preview);
+  registerClients(preview);
 
   preview.action(() => {
-    printError('missing subcommand - try `mailgun preview list` or `mailgun preview result`');
+    printError('missing subcommand - try `mailgun preview list`, `mailgun preview result`, or `mailgun preview clients`');
     process.exitCode = 2;
   });
 }

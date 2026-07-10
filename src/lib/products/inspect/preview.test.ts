@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { derivePreviewStatus, normalizePreviewList, normalizePreviewResult } from './preview.js';
+import {
+  derivePreviewStatus,
+  normalizePreviewList,
+  normalizePreviewResult,
+  normalizePreviewClients
+} from './preview.js';
 import {
   PREVIEW_LIST,
   PREVIEW_LIST_EMPTY,
@@ -8,6 +13,7 @@ import {
   PREVIEW_RESULT_PARTIAL,
   PREVIEW_RESULT_PROCESSING
 } from '../../../fixtures/inspect.js';
+import { CLIENTS_CATALOG } from '../../../fixtures/email-preview-qa-contract.js';
 
 test('list maps id/subject/from/date and leaves status null', () => {
   const out = normalizePreviewList(PREVIEW_LIST);
@@ -54,4 +60,28 @@ test('processing result has processing status', () => {
   const out = normalizePreviewResult('preview_123', PREVIEW_RESULT_PROCESSING);
   assert.equal(out.status, 'processing');
   assert.equal(out.summary.processing, 2);
+});
+
+test('client catalog normalizes to a sorted array of entries', () => {
+  const out = normalizePreviewClients(CLIENTS_CATALOG);
+  assert.equal(out.clients.length, 4);
+  // Deterministic id ordering.
+  assert.deepEqual(
+    out.clients.map((c) => c.id),
+    ['apple_mail', 'gmail_chrome', 'lotus_notes', 'outlook_win']
+  );
+  const gmail = out.clients.find((c) => c.id === 'gmail_chrome')!;
+  assert.equal(gmail.client, 'Gmail');
+  assert.equal(gmail.default, true);
+  assert.equal(gmail.free, true);
+  const lotus = out.clients.find((c) => c.id === 'lotus_notes')!;
+  assert.equal(lotus.default, false);
+  assert.deepEqual(out.data_gaps, []);
+});
+
+test('empty client catalog reports a data gap', () => {
+  const out = normalizePreviewClients({ clients: {} });
+  assert.deepEqual(out.clients, []);
+  assert.equal(out.data_gaps.length, 1);
+  assert.equal(out.data_gaps[0]!.code, 'preview_clients_catalog_empty');
 });

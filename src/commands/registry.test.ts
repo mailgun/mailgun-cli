@@ -50,7 +50,7 @@ test('command descriptors are complete and use known flags', () => {
 test('command descriptors stay in the production command set', () => {
   assert.deepEqual(
     COMMAND_REGISTRY.map((descriptor) => descriptor.command).sort(),
-    ['agent-context', 'events', 'inbox-placement list', 'inbox-placement result', 'metrics summary', 'preview list', 'preview result', 'validate-email']
+    ['agent-context', 'events', 'inbox-placement list', 'inbox-placement result', 'metrics summary', 'preview clients', 'preview list', 'preview result', 'validate-email']
   );
   assert.ok(!COMMAND_REGISTRY.some((descriptor) => descriptor.command === 'health'));
   assert.ok(!COMMAND_REGISTRY.some((descriptor) => descriptor.command === 'investigate'));
