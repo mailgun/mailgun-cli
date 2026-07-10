@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { startMockServer, runCli } from './mock-server.js';
 import { PREVIEW_LIST, PREVIEW_LIST_EMPTY, PREVIEW_403 } from '../fixtures/inspect.js';
 import {
+  CREATE_ALL_CHECKS,
   RENDER_COMPLETE,
   RENDER_PROCESSING,
   LINK_RESULT,
@@ -13,6 +17,17 @@ import {
 } from '../fixtures/email-preview-qa-contract.js';
 
 const STATUS_PATH = '/v2/preview/tests/preview_test_001';
+
+// A unique token embedded in the HTML artifact; dry-run output must never echo it.
+const HTML_SECRET = 'SECRET_HTML_MARKER_9f8a';
+const SAMPLE_HTML = `<html><body><h1>Hi</h1><p>${HTML_SECRET}</p></body></html>`;
+
+function withHtmlFile(contents: string): { path: string; cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), 'preview-run-'));
+  const path = join(dir, 'email.html');
+  writeFileSync(path, contents, 'utf8');
+  return { path, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
 
 // Routes that resolve the four referenced structured-check results for a
 // complete render (ids come from CHECK_REFS_ALL inside RENDER_COMPLETE).
@@ -149,5 +164,151 @@ test('preview 403 surfaces API response', async () => {
     assert.match(result.stderr, /Email Preview is not enabled/);
   } finally {
     await server.close();
+  }
+});
+
+// --- preview run (write) ---
+
+const CREATE_ROUTES = [
+  { method: 'POST', path: '/v2/preview/tests', json: CREATE_ALL_CHECKS },
+  { method: 'GET', path: STATUS_PATH, json: RENDER_COMPLETE },
+  ...RESULT_ROUTES
+];
+
+test('preview run --dry-run makes zero network calls, needs no api key, and never prints HTML', async () => {
+  const file = withHtmlFile(SAMPLE_HTML);
+  const server = await startMockServer(CREATE_ROUTES);
+  try {
+    const result = await runCli(
+      ['preview', 'run', '--subject', 'June', '--html', file.path, '--dry-run', '--json'],
+      {},
+      server.baseUrl
+    );
+    assert.equal(result.code, 0);
+    assert.equal(server.requests.length, 0, 'dry run must not touch the network');
+    const json = JSON.parse(result.stdout);
+    assert.equal(json.action, 'preview run');
+    assert.equal(json.consumes_quota, true);
+    assert.equal(json.sends_email, false);
+    assert.equal(json.uses_mailgun_default_clients, true);
+    assert.equal(json.html_bytes, Buffer.byteLength(SAMPLE_HTML, 'utf8'));
+    assert.match(json.html_sha256, /^[0-9a-f]{64}$/);
+    assert.ok(!result.stdout.includes(HTML_SECRET), 'dry run must never print HTML content');
+  } finally {
+    await server.close();
+    file.cleanup();
+  }
+});
+
+test('preview run --yes issues exactly one POST then polls to a complete summary', async () => {
+  const file = withHtmlFile(SAMPLE_HTML);
+  const server = await startMockServer(CREATE_ROUTES);
+  try {
+    const result = await runCli(
+      ['preview', 'run', '--subject', 'June', '--html', file.path, '--yes', '--json'],
+      { MAILGUN_API_KEY: 'k' },
+      server.baseUrl
+    );
+    assert.equal(result.code, 0);
+    const posts = server.requests.filter((r) => r.method === 'POST' && r.path === '/v2/preview/tests');
+    assert.equal(posts.length, 1, 'exactly one create POST');
+    const body = JSON.parse(posts[0]!.body);
+    assert.equal(body.subject, 'June');
+    assert.deepEqual(body.content_checking, {
+      link_validation: true,
+      image_validation: true,
+      accessibility: true,
+      code_analysis: true
+    });
+    assert.equal(body.clients, undefined);
+    const json = JSON.parse(result.stdout);
+    assert.equal(json.test_id, 'preview_test_001');
+    assert.equal(json.status, 'complete');
+    assert.equal(json.issue_counts.total, 5);
+  } finally {
+    await server.close();
+    file.cleanup();
+  }
+});
+
+test('preview run rejects both --dry-run and --yes (exit 2, before network)', async () => {
+  const file = withHtmlFile(SAMPLE_HTML);
+  const server = await startMockServer(CREATE_ROUTES);
+  try {
+    const result = await runCli(
+      ['preview', 'run', '--subject', 'June', '--html', file.path, '--dry-run', '--yes', '--json'],
+      { MAILGUN_API_KEY: 'k' },
+      server.baseUrl
+    );
+    assert.equal(result.code, 2);
+    assert.equal(server.requests.length, 0);
+    assert.match(result.stderr, /cannot be combined/);
+  } finally {
+    await server.close();
+    file.cleanup();
+  }
+});
+
+test('preview run with neither --dry-run nor --yes exits 2', async () => {
+  const file = withHtmlFile(SAMPLE_HTML);
+  try {
+    const result = await runCli(['preview', 'run', '--subject', 'June', '--html', file.path, '--json'], {
+      MAILGUN_API_KEY: 'k'
+    });
+    assert.equal(result.code, 2);
+    assert.match(result.stderr, /--dry-run to preview .* or --yes to execute/);
+  } finally {
+    file.cleanup();
+  }
+});
+
+test('preview run rejects a missing --html file before any network call (exit 2)', async () => {
+  const result = await runCli(
+    ['preview', 'run', '--subject', 'June', '--html', '/no/such/file.html', '--yes', '--json'],
+    { MAILGUN_API_KEY: 'k' }
+  );
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /could not read --html file/);
+});
+
+test('preview run rejects an oversized --html file (exit 2)', async () => {
+  const file = withHtmlFile(SAMPLE_HTML);
+  try {
+    const result = await runCli(
+      ['preview', 'run', '--subject', 'June', '--html', file.path, '--dry-run', '--json'],
+      { MAILGUN_PREVIEW_MAX_HTML_BYTES: '10' }
+    );
+    assert.equal(result.code, 2);
+    assert.match(result.stderr, /over the 10-byte limit/);
+  } finally {
+    file.cleanup();
+  }
+});
+
+test('preview run rejects a blank --subject (exit 2)', async () => {
+  const file = withHtmlFile(SAMPLE_HTML);
+  try {
+    const result = await runCli(
+      ['preview', 'run', '--subject', '   ', '--html', file.path, '--dry-run', '--json'],
+      { MAILGUN_API_KEY: 'k' }
+    );
+    assert.equal(result.code, 2);
+    assert.match(result.stderr, /--subject is required/);
+  } finally {
+    file.cleanup();
+  }
+});
+
+test('preview run rejects an unknown --content-checks name (exit 2)', async () => {
+  const file = withHtmlFile(SAMPLE_HTML);
+  try {
+    const result = await runCli(
+      ['preview', 'run', '--subject', 'June', '--html', file.path, '--content-checks', 'bogus', '--dry-run', '--json'],
+      { MAILGUN_API_KEY: 'k' }
+    );
+    assert.equal(result.code, 2);
+    assert.match(result.stderr, /unknown check 'bogus'/);
+  } finally {
+    file.cleanup();
   }
 });

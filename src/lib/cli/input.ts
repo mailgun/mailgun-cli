@@ -56,3 +56,58 @@ export function parseTimeoutSeconds(value: unknown): number | undefined {
   }
   return parsed.data;
 }
+
+// Parse a comma-separated --clients list into a deduped id array. Returns
+// undefined when omitted (the caller then relies on Mailgun's default clients).
+// An explicitly empty value is a usage error - omit the flag instead.
+export function parseClientsList(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') {
+    throw new UsageError('--clients must be a comma-separated list of client ids');
+  }
+  const ids = value
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (ids.length === 0) {
+    throw new UsageError('--clients was empty; omit it to use the Mailgun default client set');
+  }
+  return [...new Set(ids)];
+}
+
+const CONTENT_CHECK_NAMES = [
+  'link_validation',
+  'image_validation',
+  'accessibility',
+  'code_analysis'
+] as const;
+
+// Parse --content-checks. Undefined (omitted) means "run all four" and is
+// signalled by returning undefined so the builder applies its default. The
+// literal value "none" returns an empty array (run no checks). Unknown names are
+// a usage error.
+export function parseContentChecks(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') {
+    throw new UsageError('--content-checks must be a comma-separated list of check names, or "none"');
+  }
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed === 'none') return [];
+  const names = trimmed
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (names.length === 0) {
+    throw new UsageError(
+      `--content-checks was empty; use "none" for no checks or omit it to run all of ${CONTENT_CHECK_NAMES.join(', ')}`
+    );
+  }
+  for (const name of names) {
+    if (!(CONTENT_CHECK_NAMES as readonly string[]).includes(name)) {
+      throw new UsageError(
+        `--content-checks contains an unknown check '${name}'; valid names are ${CONTENT_CHECK_NAMES.join(', ')} (or "none")`
+      );
+    }
+  }
+  return [...new Set(names)];
+}

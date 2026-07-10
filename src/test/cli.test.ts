@@ -238,16 +238,19 @@ test('agent-context lists all production commands and excludes retired health/in
   const result = await runCli(['agent-context']);
   assert.equal(result.code, 0);
   const ctx = JSON.parse(result.stdout);
+  assert.equal(ctx.schema_version, '1.1');
   const keys = Object.keys(ctx.commands);
   assert.deepEqual(
     keys,
-    ['agent-context', 'events', 'inbox-placement list', 'inbox-placement result', 'metrics summary', 'preview clients', 'preview list', 'preview result', 'validate-email']
+    ['agent-context', 'events', 'inbox-placement list', 'inbox-placement result', 'metrics summary', 'preview clients', 'preview list', 'preview result', 'preview run', 'validate-email']
   );
   assert.ok(!keys.includes('health'));
   assert.ok(!keys.includes('investigate'));
   assert.equal(ctx.commands.events.product, 'Send');
   assert.equal(ctx.commands['metrics summary'].product, 'Send');
   assert.equal(ctx.commands['metrics summary'].mcp_tool, 'get_metrics_summary');
+  assert.equal(ctx.commands['preview run'].mode, 'write');
+  assert.equal(ctx.commands['preview run'].mcp_tool, 'run_email_preview_qa');
 });
 
 test('invalid region exits 2', async () => {

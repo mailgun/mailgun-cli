@@ -1,5 +1,6 @@
 import type { DataGap } from '../../core/types.js';
 import { buildMailgunUrl, mailgunRequest } from '../../core/mailgun.js';
+import { CliError } from '../../cli/output.js';
 
 // Email Preview QA summary. This mirrors the MCP get_email_preview_qa composite
 // output field-for-field (spec §12, §16.1): the same upstream payloads must
@@ -311,6 +312,39 @@ export function normalizeWarnings(create: unknown): PreviewWarning[] {
   });
 }
 
+// --- create request (used by `preview run`) ---
+
+export interface PreviewCreateInput {
+  subject: string;
+  html: string;
+  clients?: readonly string[];
+  // Which structured checks to enable. Undefined defaults to all four; an empty
+  // array means "no checks".
+  contentChecks?: readonly CheckName[];
+  referenceId?: string;
+}
+
+// Build the JSON body for POST /v2/preview/tests. HTML is the only supported
+// source (spec §9.1). `clients` is omitted when absent, `content_checking`
+// always sends explicit booleans for all four checks, and `reference_id` is
+// omitted when absent (spec §10). This mirrors the MCP composite byte-for-byte.
+export function buildPreviewCreateRequest(input: PreviewCreateInput): Record<string, unknown> {
+  const body: Record<string, unknown> = { subject: input.subject, html: input.html };
+  if (input.clients && input.clients.length > 0) body.clients = [...input.clients];
+
+  const requested = input.contentChecks ?? CHECK_NAMES;
+  const contentChecking: Record<string, boolean> = {};
+  for (const name of CHECK_NAMES) contentChecking[name] = requested.includes(name);
+  body.content_checking = contentChecking;
+
+  if (input.referenceId) body.reference_id = input.referenceId;
+  return body;
+}
+
+export function extractCreatedTestId(created: unknown): string | null {
+  return str(asRecord(created).id);
+}
+
 // --- output builder (pure) ---
 
 export interface BuildOutputParams {
@@ -495,7 +529,7 @@ export function buildPreviewQaOutput(params: BuildOutputParams): PreviewQaOutput
 
 // --- polling orchestration (I/O injected for deterministic tests) ---
 
-export type RequestFn = (method: string, path: string) => Promise<unknown>;
+export type RequestFn = (method: string, path: string, body?: unknown) => Promise<unknown>;
 
 export interface PollDeps {
   request: RequestFn;
@@ -580,20 +614,29 @@ export function clampTimeoutSeconds(value: number | undefined): number {
   return value;
 }
 
+// Default polling deadline for `preview run` create+poll (spec §14). Longer than
+// the read default because the render starts empty right after creation.
+const RUN_DEFAULT_TIMEOUT_SECONDS = 300;
+
+function liveDeps(apiKey: string, baseUrl: string): PollDeps {
+  return {
+    request: (method, path, body) =>
+      mailgunRequest<unknown>(buildMailgunUrl(path, undefined, baseUrl), apiKey, 'preview qa', {
+        method: method as 'GET' | 'POST',
+        ...(body !== undefined ? { body } : {})
+      }),
+    now: () => Date.now(),
+    sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+  };
+}
+
 export async function getPreviewQa(params: {
   apiKey: string;
   baseUrl: string;
   testId: string;
   timeoutSeconds?: number;
 }): Promise<PreviewQaOutput> {
-  const deps: PollDeps = {
-    request: (method, path) =>
-      mailgunRequest<unknown>(buildMailgunUrl(path, undefined, params.baseUrl), params.apiKey, 'preview qa', {
-        method: method as 'GET'
-      }),
-    now: () => Date.now(),
-    sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-  };
+  const deps = liveDeps(params.apiKey, params.baseUrl);
   const timeoutMs = clampTimeoutSeconds(params.timeoutSeconds) * 1000;
   const poll = await pollPreviewQa({ testId: params.testId, timeoutMs }, deps);
   return buildPreviewQaOutput({
@@ -605,4 +648,63 @@ export async function getPreviewQa(params: {
   });
 }
 
-export { MAX_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS };
+// Create ONE preview test, then poll and summarize. This is the CLI's only write.
+// The create is issued exactly once and never retried (V2 creation is not
+// idempotent). On an ambiguous transport failure the test may already exist, so
+// we report that and recommend reconciliation rather than creating a second one.
+export async function runPreviewTest(params: {
+  apiKey: string;
+  baseUrl: string;
+  create: PreviewCreateInput;
+  timeoutSeconds?: number;
+}): Promise<PreviewQaOutput> {
+  const deps = liveDeps(params.apiKey, params.baseUrl);
+  const body = buildPreviewCreateRequest(params.create);
+  const refHint = params.create.referenceId ? ` (reference_id ${params.create.referenceId})` : '';
+
+  let created: unknown;
+  try {
+    created = await deps.request('POST', '/v2/preview/tests', body);
+  } catch (error) {
+    const status = (error as { statusCode?: number } | null)?.statusCode;
+    // A definitive HTTP response (4xx/5xx) — surface it as-is; never retry.
+    if (typeof status === 'number' && status >= 400) throw error;
+    // Ambiguous: the request may have reached Mailgun before failing.
+    throw new CliError(
+      `the preview test create request failed after it may have reached Mailgun - a test may have been created and a second create was NOT attempted; reconcile with 'mailgun preview list'${refHint} before retrying`
+    );
+  }
+
+  const testId = extractCreatedTestId(created);
+  if (testId === null) {
+    throw new CliError(
+      `the create response did not include a test id - reconcile with 'mailgun preview list'${refHint} before retrying`
+    );
+  }
+
+  const warnings = normalizeWarnings(created);
+  const timeoutMs =
+    clampTimeoutSeconds(params.timeoutSeconds ?? RUN_DEFAULT_TIMEOUT_SECONDS) * 1000;
+
+  let poll: PollResult;
+  try {
+    poll = await pollPreviewQa({ testId, timeoutMs }, deps);
+  } catch (error) {
+    // The test WAS created; polling failure must not trigger a re-create.
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new CliError(
+      `preview test ${testId} was created, but retrieving its status failed - resume with 'mailgun preview result ${testId}'. Cause: ${cause}`
+    );
+  }
+
+  return buildPreviewQaOutput({
+    testId,
+    render: poll.render,
+    refs: poll.refs,
+    fetches: poll.fetches,
+    timedOut: poll.timedOut,
+    warnings
+  });
+}
+
+export { MAX_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS, RUN_DEFAULT_TIMEOUT_SECONDS };

@@ -1,17 +1,83 @@
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { Command } from 'commander';
 import { mergedOpts, resolveRuntime } from '../lib/core/runtime.js';
-import { parseLimit, parseTimeoutSeconds, resolveRequiredArg } from '../lib/cli/input.js';
+import {
+  parseClientsList,
+  parseContentChecks,
+  parseLimit,
+  parseTimeoutSeconds,
+  resolveRequiredArg
+} from '../lib/cli/input.js';
 import {
   listPreviewTests,
   listPreviewClients,
   type PreviewListOutput,
   type PreviewClientsOutput
 } from '../lib/products/inspect/preview.js';
-import { getPreviewQa, type PreviewQaOutput } from '../lib/products/inspect/preview-qa.js';
+import {
+  getPreviewQa,
+  runPreviewTest,
+  type CheckName,
+  type PreviewCreateInput,
+  type PreviewQaOutput
+} from '../lib/products/inspect/preview-qa.js';
 import { addApiOptions } from './shared-options.js';
-import { chalkFor, handleCommandError, printError, printJSON } from '../lib/cli/output.js';
+import { chalkFor, handleCommandError, printError, printJSON, UsageError } from '../lib/cli/output.js';
+import { resolveWriteMode } from '../lib/cli/write-guard.js';
 import { createSpinner } from '../lib/cli/spinner.js';
 import type { CommandDescriptor } from './descriptor.js';
+
+// HTML payload ceiling. This is a RELEASE GATE (spec §9.4, §24.1): the true
+// Inspect limit is unconfirmed, so we enforce a conservative, overridable bound
+// rather than hard-coding an unverified number. Override with
+// MAILGUN_PREVIEW_MAX_HTML_BYTES for local experimentation.
+const DEFAULT_MAX_HTML_BYTES = 2 * 1024 * 1024;
+
+function maxHtmlBytes(): number {
+  const raw = process.env.MAILGUN_PREVIEW_MAX_HTML_BYTES;
+  if (raw !== undefined && /^\d+$/.test(raw.trim())) {
+    const parsed = Number(raw.trim());
+    if (parsed > 0) return parsed;
+  }
+  return DEFAULT_MAX_HTML_BYTES;
+}
+
+interface HtmlSource {
+  path: string;
+  html: string;
+  bytes: number;
+  sha256: string;
+}
+
+// Read the HTML payload from a file (file-only; never stdin, never inline). All
+// failures are usage errors raised before any network call so a bad artifact
+// can never consume preview quota.
+function readHtmlSource(pathValue: unknown): HtmlSource {
+  if (typeof pathValue !== 'string' || pathValue.trim() === '') {
+    throw new UsageError('--html <file> is required and must be a path to an HTML file');
+  }
+  const path = pathValue.trim();
+  let html: string;
+  try {
+    html = readFileSync(path, 'utf8');
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new UsageError(`could not read --html file '${path}': ${reason}`);
+  }
+  if (html.trim() === '') {
+    throw new UsageError(`--html file '${path}' is empty`);
+  }
+  const bytes = Buffer.byteLength(html, 'utf8');
+  const limit = maxHtmlBytes();
+  if (bytes > limit) {
+    throw new UsageError(
+      `--html file '${path}' is ${bytes} bytes, over the ${limit}-byte limit (override with MAILGUN_PREVIEW_MAX_HTML_BYTES)`
+    );
+  }
+  const sha256 = createHash('sha256').update(html, 'utf8').digest('hex');
+  return { path, html, bytes, sha256 };
+}
 
 export const PREVIEW_DESCRIPTORS: CommandDescriptor[] = [
   {
@@ -58,6 +124,42 @@ export const PREVIEW_DESCRIPTORS: CommandDescriptor[] = [
     flags: ['--region', '--json', '--quiet'],
     outputFields: ['clients', 'data_gaps'],
     examples: ['mailgun preview clients --json']
+  },
+  {
+    command: 'preview run',
+    mode: 'write',
+    description: 'Create and summarize an email preview QA test from an HTML file (consumes quota)',
+    product: 'Inspect',
+    mcpTool: 'run_email_preview_qa',
+    flags: [
+      '--subject',
+      '--html',
+      '--clients',
+      '--content-checks',
+      '--reference-id',
+      '--timeout',
+      '--dry-run',
+      '--yes',
+      '--region',
+      '--json',
+      '--quiet'
+    ],
+    outputFields: [
+      'test_id',
+      'status',
+      'timed_out',
+      'summary',
+      'clients',
+      'checks',
+      'issue_counts',
+      'warnings',
+      'data_gaps'
+    ],
+    examples: [
+      'mailgun preview run --subject "June campaign" --html ./email.html --dry-run',
+      'mailgun preview run --subject "June campaign" --html ./email.html --yes --json',
+      'mailgun preview run --subject "Promo" --html ./promo.html --clients gmail_chrome,apple_mail --yes'
+    ]
   }
 ];
 
@@ -231,14 +333,144 @@ function registerResult(parent: Command): void {
   });
 }
 
+interface DryRunSummary {
+  action: 'preview run';
+  will_create_remote_test: true;
+  consumes_quota: true;
+  sends_email: false;
+  subject: string;
+  html_path: string;
+  html_bytes: number;
+  html_sha256: string;
+  content_checks: string[];
+  timeout_seconds: number;
+  clients?: string[];
+  uses_mailgun_default_clients?: true;
+  reference_id?: string;
+}
+
+function buildDryRunSummary(
+  create: PreviewCreateInput,
+  source: HtmlSource,
+  timeoutSeconds: number
+): DryRunSummary {
+  const summary: DryRunSummary = {
+    action: 'preview run',
+    will_create_remote_test: true,
+    consumes_quota: true,
+    sends_email: false,
+    subject: create.subject,
+    html_path: source.path,
+    html_bytes: source.bytes,
+    html_sha256: source.sha256,
+    // undefined contentChecks means "all four"; the builder default.
+    content_checks: create.contentChecks ? [...create.contentChecks] : ['(all)'],
+    timeout_seconds: timeoutSeconds
+  };
+  if (create.clients && create.clients.length > 0) summary.clients = [...create.clients];
+  else summary.uses_mailgun_default_clients = true;
+  if (create.referenceId) summary.reference_id = create.referenceId;
+  return summary;
+}
+
+function printDryRun(summary: DryRunSummary, opts: { json?: boolean; quiet?: boolean }): void {
+  const chalk = chalkFor(opts);
+  process.stdout.write(`${chalk.bold('preview run (dry run)')}\n`);
+  process.stdout.write(`  ${chalk.dim('this WILL create a remote Inspect test and consume preview quota; it does NOT send email')}\n\n`);
+  process.stdout.write(`  subject         ${summary.subject}\n`);
+  process.stdout.write(`  html path       ${summary.html_path}\n`);
+  process.stdout.write(`  html bytes      ${summary.html_bytes}\n`);
+  process.stdout.write(`  html sha256     ${summary.html_sha256}\n`);
+  process.stdout.write(
+    `  clients         ${summary.clients ? summary.clients.join(', ') : 'Mailgun defaults'}\n`
+  );
+  process.stdout.write(`  content checks  ${summary.content_checks.join(', ')}\n`);
+  if (summary.reference_id) process.stdout.write(`  reference id    ${summary.reference_id}\n`);
+  process.stdout.write(`  timeout         ${summary.timeout_seconds}s\n`);
+  if (opts.quiet !== true) process.stdout.write('\n  re-run with --yes to execute.\n');
+}
+
+function registerRun(parent: Command): void {
+  const run = parent
+    .command('run')
+    .description('Create and summarize an email preview QA test from an HTML file (consumes quota)')
+    .option('--subject <subject>', 'subject line for the preview test (required)')
+    .option('--html <file>', 'path to the HTML email file to test (required)')
+    .option('--clients <ids>', 'comma-separated client ids (default: Mailgun default clients)')
+    .option('--content-checks <names>', 'comma-separated checks or "none" (default: all four)')
+    .option('--reference-id <id>', 'caller-supplied id echoed back for reconciliation')
+    .option('--timeout <seconds>', 'max seconds to poll after creating (0-600, default 300)')
+    .option('--dry-run', 'validate and summarize the request without creating anything')
+    .option('--yes', 'create the preview test (consumes quota)')
+    .addHelpText(
+      'after',
+      '\nExamples:\n  mailgun preview run --subject "June campaign" --html ./email.html --dry-run\n  mailgun preview run --subject "June campaign" --html ./email.html --yes --json\n'
+    );
+
+  addApiOptions(run);
+
+  run.action(async (_options, command: Command) => {
+    const spinner = createSpinner(mergedOpts(command));
+    try {
+      const opts = mergedOpts(command);
+
+      // 1) Write guard first: makes intent explicit before anything else.
+      const mode = resolveWriteMode({ dryRun: opts.dryRun === true, yes: opts.yes === true });
+
+      // 2) Validate + build the request. All input errors reject before any
+      //    network call, so a bad artifact can never consume quota.
+      const subject = typeof opts.subject === 'string' ? opts.subject.trim() : '';
+      if (subject === '') throw new UsageError('--subject is required and must be non-empty');
+      const source = readHtmlSource(opts.html);
+      const clients = parseClientsList(opts.clients);
+      const contentChecks = parseContentChecks(opts.contentChecks) as CheckName[] | undefined;
+      const referenceId =
+        typeof opts.referenceId === 'string' && opts.referenceId.trim() !== ''
+          ? opts.referenceId.trim()
+          : undefined;
+      const timeoutSeconds = parseTimeoutSeconds(opts.timeout) ?? 300;
+
+      const create: PreviewCreateInput = { subject, html: source.html, clients, contentChecks, referenceId };
+
+      // 3) Dry run: never reads credentials, never touches the network.
+      if (mode === 'dry-run') {
+        const summary = buildDryRunSummary(create, source, timeoutSeconds);
+        if (opts.json === true) printJSON(summary);
+        else printDryRun(summary, mergedOpts(command));
+        return;
+      }
+
+      // 4) Execute: one POST, then GET-only polling.
+      const runtime = resolveRuntime(command, { requireApiKey: true });
+      spinner.start('Creating preview test...');
+      const output = await runPreviewTest({
+        apiKey: runtime.apiKey!,
+        baseUrl: runtime.baseUrl,
+        create,
+        timeoutSeconds
+      });
+      spinner.stop();
+
+      if (runtime.json) printJSON(output);
+      else printResult(output, runtime);
+    } catch (error) {
+      spinner.fail();
+      handleCommandError(error);
+    }
+  });
+}
+
 export function registerPreview(program: Command): void {
   const preview = program.command('preview').description('Email preview (Inspect) commands');
   registerList(preview);
   registerResult(preview);
   registerClients(preview);
+  registerRun(preview);
 
   preview.action(() => {
-    printError('missing subcommand - try `mailgun preview list`, `mailgun preview result`, or `mailgun preview clients`');
+    printError(
+      'missing subcommand - try `mailgun preview list`, `mailgun preview result`, `mailgun preview clients`, or `mailgun preview run`'
+    );
     process.exitCode = 2;
   });
 }
