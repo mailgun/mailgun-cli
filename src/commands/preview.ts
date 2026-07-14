@@ -16,6 +16,12 @@ import {
   type PreviewClientsOutput
 } from '../lib/products/inspect/preview.js';
 import {
+  getPreviewIssues,
+  getPreviewRender,
+  type PreviewIssuesOutput,
+  type PreviewRenderOutput
+} from '../lib/products/inspect/preview-details.js';
+import {
   CHECK_NAMES,
   getPreviewQa,
   runPreviewTest,
@@ -78,6 +84,42 @@ function readHtmlSource(pathValue: unknown): HtmlSource {
 }
 
 export const PREVIEW_DESCRIPTORS: CommandDescriptor[] = [
+  {
+    command: 'preview issues',
+    mode: 'read',
+    description: 'Explain individual findings for an email preview QA check',
+    product: 'Inspect',
+    flags: ['--test-id', '--check', '--region', '--json', '--quiet'],
+    outputFields: ['test_id', 'check', 'result_id', 'status', 'totals', 'issues', 'data_gaps'],
+    examples: ['mailgun preview issues preview_123 --check accessibility']
+  },
+  {
+    command: 'preview render',
+    mode: 'read',
+    description: 'Inspect or download one client render from an email preview test',
+    product: 'Inspect',
+    mcpTool: 'get_preview_client_result',
+    flags: ['--test-id', '--client-id', '--variant', '--output', '--region', '--json', '--quiet'],
+    outputFields: [
+      'test_id',
+      'client_id',
+      'display_name',
+      'client',
+      'os',
+      'browser',
+      'category',
+      'status',
+      'available_variants',
+      'selected_variant',
+      'output_path',
+      'bytes',
+      'data_gaps'
+    ],
+    examples: [
+      'mailgun preview render preview_123 gmail_chrome',
+      'mailgun preview render preview_123 gmail_chrome --variant full --output ./gmail.png'
+    ]
+  },
   {
     command: 'preview list',
     mode: 'read',
@@ -199,6 +241,57 @@ function printResult(output: PreviewQaOutput, opts: { json?: boolean; quiet?: bo
   }
   for (const gap of output.data_gaps) process.stdout.write(`  ${chalk.dim(`data gap: ${gap.message}`)}\n`);
   if (opts.quiet !== true) process.stdout.write('\n  (use --json for full counts and references)\n');
+}
+
+function printIssues(output: PreviewIssuesOutput, opts: { json?: boolean; quiet?: boolean }): void {
+  const chalk = chalkFor(opts);
+  if (opts.quiet !== true) {
+    process.stdout.write(`${chalk.bold(`${output.check} findings - ${output.test_id}`)}\n`);
+    process.stdout.write(
+      `  ${output.totals.confirmed} confirmed, ${output.totals.needs_review} needs review\n\n`
+    );
+  }
+  if (output.status === 'processing') {
+    process.stdout.write('Result is still processing.\n');
+    return;
+  }
+  if (output.issues.length === 0) {
+    process.stdout.write('No findings.\n');
+    return;
+  }
+  for (const issue of output.issues) {
+    const label = issue.kind === 'failure' ? issue.impact ?? 'unknown' : 'needs review';
+    process.stdout.write(`${chalk.bold(`[${label}] ${issue.rule ?? 'Unknown rule'}`)}\n`);
+    if (issue.description) process.stdout.write(`  ${issue.description}\n`);
+    const location = [
+      issue.line === null ? null : `line ${issue.line}`,
+      issue.column === null ? null : `column ${issue.column}`,
+      ...issue.target
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    if (location) process.stdout.write(`  ${chalk.dim(location)}\n`);
+    if (issue.url) process.stdout.write(`  ${issue.url}\n`);
+    if (issue.snippet) process.stdout.write(`  ${chalk.dim(issue.snippet)}\n`);
+    process.stdout.write('\n');
+  }
+}
+
+function printRender(output: PreviewRenderOutput, opts: { json?: boolean; quiet?: boolean }): void {
+  const chalk = chalkFor(opts);
+  if (opts.quiet !== true) {
+    const title = output.display_name ?? output.client_id;
+    process.stdout.write(`${chalk.bold(title)}\n`);
+  }
+  process.stdout.write(`  client id   ${output.client_id}\n`);
+  process.stdout.write(`  client      ${output.client ?? '-'}\n`);
+  process.stdout.write(`  os          ${output.os ?? '-'}\n`);
+  process.stdout.write(`  status      ${output.status ?? '-'}\n`);
+  process.stdout.write(`  variants    ${output.available_variants.join(', ') || '-'}\n`);
+  if (output.output_path) {
+    process.stdout.write(`  saved       ${output.output_path}\n`);
+    process.stdout.write(`  bytes       ${output.bytes ?? 0}\n`);
+  }
 }
 
 function printClients(output: PreviewClientsOutput, opts: { json?: boolean; quiet?: boolean }): void {
@@ -324,6 +417,110 @@ function registerResult(parent: Command): void {
 
       if (runtime.json) printJSON(output);
       else printResult(output, runtime);
+    } catch (error) {
+      spinner.fail();
+      handleCommandError(error);
+    }
+  });
+}
+
+function registerIssues(parent: Command): void {
+  const issues = parent
+    .command('issues')
+    .description('Explain individual findings for one preview QA check')
+    .argument('[test_id]', 'email preview test ID (alternative to --test-id)')
+    .option('--test-id <test_id>', 'email preview test ID')
+    .requiredOption('--check <name>', 'check to explain (link_validation, image_validation, or accessibility)')
+    .addHelpText(
+      'after',
+      '\nExamples:\n  mailgun preview issues preview_123 --check accessibility\n  mailgun preview issues --test-id preview_123 --check accessibility --json\n'
+    );
+
+  addApiOptions(issues);
+
+  issues.action(async (positional: string | undefined, _options, command: Command) => {
+    const spinner = createSpinner(mergedOpts(command));
+    try {
+      const opts = mergedOpts(command);
+      const testId = resolveRequiredArg({
+        positional,
+        flag: typeof opts.testId === 'string' ? opts.testId : undefined,
+        flagName: '--test-id',
+        missingMessage: "a test id is required (positional or --test-id; get one from 'mailgun preview list')"
+      });
+      const check = typeof opts.check === 'string' ? opts.check.trim() : '';
+      if (!['link_validation', 'image_validation', 'accessibility'].includes(check)) {
+        throw new UsageError('--check must be link_validation, image_validation, or accessibility');
+      }
+      const runtime = resolveRuntime(command, { requireApiKey: true });
+      spinner.start('Fetching preview findings...');
+      const output = await getPreviewIssues({
+        apiKey: runtime.apiKey!,
+        baseUrl: runtime.baseUrl,
+        testId,
+        check: check as CheckName
+      });
+      spinner.stop();
+      if (runtime.json) printJSON(output);
+      else printIssues(output, runtime);
+    } catch (error) {
+      spinner.fail();
+      handleCommandError(error);
+    }
+  });
+}
+
+function registerRender(parent: Command): void {
+  const render = parent
+    .command('render')
+    .description('Inspect or download one client render from a preview test')
+    .argument('[test_id]', 'email preview test ID (alternative to --test-id)')
+    .argument('[client_id]', 'preview client ID (alternative to --client-id)')
+    .option('--test-id <test_id>', 'email preview test ID')
+    .option('--client-id <client_id>', 'preview client ID')
+    .option('--variant <name>', 'render variant to download, such as full, portrait, or thumbnail')
+    .option('--output <path>', 'local path for the downloaded image; refuses to overwrite')
+    .addHelpText(
+      'after',
+      '\nExamples:\n  mailgun preview render preview_123 gmail_chrome\n  mailgun preview render preview_123 gmail_chrome --variant full --output ./gmail.png\n'
+    );
+
+  addApiOptions(render);
+
+  render.action(async (
+    positionalTestId: string | undefined,
+    positionalClientId: string | undefined,
+    _options,
+    command: Command
+  ) => {
+    const spinner = createSpinner(mergedOpts(command));
+    try {
+      const opts = mergedOpts(command);
+      const testId = resolveRequiredArg({
+        positional: positionalTestId,
+        flag: typeof opts.testId === 'string' ? opts.testId : undefined,
+        flagName: '--test-id',
+        missingMessage: "a test id is required (positional or --test-id; get one from 'mailgun preview list')"
+      });
+      const clientId = resolveRequiredArg({
+        positional: positionalClientId,
+        flag: typeof opts.clientId === 'string' ? opts.clientId : undefined,
+        flagName: '--client-id',
+        missingMessage: "a client id is required (positional or --client-id; get one from 'mailgun preview clients')"
+      });
+      const runtime = resolveRuntime(command, { requireApiKey: true });
+      spinner.start('Fetching client render...');
+      const output = await getPreviewRender({
+        apiKey: runtime.apiKey!,
+        baseUrl: runtime.baseUrl,
+        testId,
+        clientId,
+        variant: typeof opts.variant === 'string' ? opts.variant.trim() : undefined,
+        outputPath: typeof opts.output === 'string' ? opts.output.trim() : undefined
+      });
+      spinner.stop();
+      if (runtime.json) printJSON(output);
+      else printRender(output, runtime);
     } catch (error) {
       spinner.fail();
       handleCommandError(error);
@@ -486,12 +683,14 @@ export function registerPreview(program: Command): void {
   const preview = program.command('preview').description('Email preview (Inspect) commands');
   registerList(preview);
   registerResult(preview);
+  registerIssues(preview);
+  registerRender(preview);
   registerClients(preview);
   registerRun(preview);
 
   preview.action(() => {
     printError(
-      'missing subcommand - try `mailgun preview list`, `mailgun preview result`, `mailgun preview clients`, or `mailgun preview run`'
+      'missing subcommand - try `mailgun preview list`, `mailgun preview result`, `mailgun preview issues`, `mailgun preview render`, `mailgun preview clients`, or `mailgun preview run`'
     );
     process.exitCode = 2;
   });

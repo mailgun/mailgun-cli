@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startMockServer, runCli } from './mock-server.js';
+import { startMockServer, runCli, type RecordedRequest } from './mock-server.js';
 import { PREVIEW_LIST, PREVIEW_LIST_EMPTY, PREVIEW_403 } from '../fixtures/inspect.js';
 import {
   CREATE_ALL_CHECKS,
@@ -14,6 +14,7 @@ import {
   ACCESSIBILITY_RESULT,
   CODE_ANALYSIS_RESULT,
   CODE_ANALYSIS_PROCESSING,
+  CLIENT_RESULT,
   CLIENTS_CATALOG
 } from '../fixtures/email-preview-qa-contract.js';
 
@@ -119,6 +120,153 @@ test('preview result accepts a positional test id', async () => {
     assert.equal(result.code, 0);
     assert.equal(server.requests[0]!.path, STATUS_PATH);
   } finally {
+    await server.close();
+  }
+});
+
+test('preview issues explains accessibility findings from a test id', async () => {
+  const server = await startMockServer([
+    { method: 'GET', path: STATUS_PATH, json: RENDER_COMPLETE },
+    { method: 'GET', path: '/v1/inspect/accessibility/access_001', json: ACCESSIBILITY_RESULT }
+  ]);
+  try {
+    const result = await runCli(
+      ['preview', 'issues', 'preview_test_001', '--check', 'accessibility', '--json'],
+      { MAILGUN_API_KEY: 'k' },
+      server.baseUrl
+    );
+    assert.equal(result.code, 0);
+    const json = JSON.parse(result.stdout);
+    assert.equal(json.test_id, 'preview_test_001');
+    assert.equal(json.check, 'accessibility');
+    assert.equal(json.result_id, 'access_001');
+    assert.deepEqual(json.totals, { confirmed: 3, needs_review: 1 });
+    assert.equal(json.issues.length, 4);
+    assert.deepEqual(json.issues[0], {
+      kind: 'failure',
+      rule: 'Color Contrast',
+      impact: 'serious',
+      description: 'Text has insufficient contrast.',
+      standards: ['WCAG 2AA'],
+      line: 20,
+      column: null,
+      target: ['h1'],
+      snippet: '<h1 style="color:#fff2f0">',
+      url: null
+    });
+    assert.deepEqual(server.requests.map((request) => request.path), [
+      STATUS_PATH,
+      '/v1/inspect/accessibility/access_001'
+    ]);
+  } finally {
+    await server.close();
+  }
+});
+
+test('preview issues explains link failures without including passing checks', async () => {
+  const server = await startMockServer([
+    { method: 'GET', path: STATUS_PATH, json: RENDER_COMPLETE },
+    { method: 'GET', path: '/v1/inspect/links/link_001', json: LINK_RESULT }
+  ]);
+  try {
+    const result = await runCli(
+      ['preview', 'issues', 'preview_test_001', '--check', 'link_validation', '--json'],
+      { MAILGUN_API_KEY: 'k' },
+      server.baseUrl
+    );
+    assert.equal(result.code, 0);
+    const json = JSON.parse(result.stdout);
+    assert.deepEqual(json.totals, { confirmed: 2, needs_review: 0 });
+    assert.equal(json.issues.length, 2);
+    assert.deepEqual(json.issues[0], {
+      kind: 'failure',
+      rule: 'Broken Link',
+      impact: 'critical',
+      description: 'Link returned 404.',
+      standards: [],
+      line: 20,
+      column: 6,
+      target: [],
+      snippet: null,
+      url: 'https://example.com/broken'
+    });
+  } finally {
+    await server.close();
+  }
+});
+
+test('preview issues shows failed link URLs in human output', async () => {
+  const server = await startMockServer([
+    { method: 'GET', path: STATUS_PATH, json: RENDER_COMPLETE },
+    { method: 'GET', path: '/v1/inspect/links/link_001', json: LINK_RESULT }
+  ]);
+  try {
+    const result = await runCli(
+      ['preview', 'issues', 'preview_test_001', '--check', 'link_validation'],
+      { MAILGUN_API_KEY: 'k' },
+      server.baseUrl
+    );
+    assert.equal(result.code, 0);
+    assert.match(result.stdout, /https:\/\/example\.com\/broken/);
+    assert.match(result.stdout, /line 20 · column 6/);
+    assert.doesNotMatch(result.stdout, /https:\/\/example\.com\/ok/);
+  } finally {
+    await server.close();
+  }
+});
+
+test('preview render downloads one selected client image without printing its signed URL', async () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+  const server = await startMockServer([
+    {
+      method: 'GET',
+      path: '/v2/preview/tests/preview_test_001/results/gmail_chrome',
+      json: (request: RecordedRequest) => ({
+        ...CLIENT_RESULT,
+        gmail_chrome: {
+          ...CLIENT_RESULT.gmail_chrome,
+          screenshots: { full: `http://${request.headers.host}/signed/full.png?token=secret` }
+        }
+      })
+    },
+    {
+      method: 'GET',
+      path: '/signed/full.png',
+      body: png,
+      headers: { 'Content-Type': 'image/png' }
+    }
+  ]);
+  const dir = mkdtempSync(join(tmpdir(), 'preview-render-'));
+  const outputPath = join(dir, 'gmail.png');
+  try {
+    const result = await runCli(
+      [
+        'preview',
+        'render',
+        'preview_test_001',
+        'gmail_chrome',
+        '--variant',
+        'full',
+        '--output',
+        outputPath,
+        '--json'
+      ],
+      { MAILGUN_API_KEY: 'k' },
+      server.baseUrl
+    );
+    assert.equal(result.code, 0);
+    const json = JSON.parse(result.stdout);
+    assert.equal(json.test_id, 'preview_test_001');
+    assert.equal(json.client_id, 'gmail_chrome');
+    assert.equal(json.display_name, 'Gmail (Chrome)');
+    assert.deepEqual(json.available_variants, ['full', 'full_thumbnail', 'thumbnail']);
+    assert.equal(json.selected_variant, 'full');
+    assert.equal(json.output_path, outputPath);
+    assert.equal(json.bytes, png.length);
+    assert.equal(result.stdout.includes('token=secret'), false);
+    assert.deepEqual(readFileSync(outputPath), png);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
     await server.close();
   }
 });

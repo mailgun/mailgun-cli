@@ -21,7 +21,10 @@ export interface MockRoute {
   path: string;
   status?: number;
   // JSON body to return, or a function of the recorded request.
-  json: unknown | ((req: RecordedRequest) => unknown);
+  json?: unknown | ((req: RecordedRequest) => unknown);
+  // Raw response support for download-oriented subprocess tests.
+  body?: string | Buffer;
+  headers?: Record<string, string>;
 }
 
 export interface MockServerHandle {
@@ -52,8 +55,13 @@ export async function startMockServer(routes: MockRoute[]): Promise<MockServerHa
         res.end(JSON.stringify({ message: 'no mock route' }));
         return;
       }
+      if (route.body !== undefined) {
+        res.writeHead(route.status ?? 200, route.headers ?? {});
+        res.end(route.body);
+        return;
+      }
       const payload = typeof route.json === 'function' ? (route.json as (r: RecordedRequest) => unknown)(recorded) : route.json;
-      res.writeHead(route.status ?? 200, { 'Content-Type': 'application/json' });
+      res.writeHead(route.status ?? 200, { 'Content-Type': 'application/json', ...(route.headers ?? {}) });
       res.end(JSON.stringify(payload));
     });
   });

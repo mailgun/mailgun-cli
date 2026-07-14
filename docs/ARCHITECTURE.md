@@ -27,11 +27,18 @@ Design intent:
 | `preview list`           | Inspect  | CLI discovery helper             | `GET /v2/preview/tests`           |
 | `preview clients`        | Inspect  | `list_preview_clients`           | `GET /v1/preview/tests/clients`   |
 | `preview result`         | Inspect  | `get_email_preview_qa`           | Preview status + check details    |
+| `preview issues`         | Inspect  | Selected Inspect detail tool     | Preview status + one check detail |
+| `preview render`         | Inspect  | `get_preview_client_result`      | `GET /v2/preview/tests/{id}/results/{client}` |
 | `preview run`            | Inspect  | `run_email_preview_qa`           | `POST /v2/preview/tests` + reads  |
 | `events`                 | Send     | CLI utility                      | `POST /v1/analytics/logs`         |
 | `agent-context`          | n/a      | CLI introspection                | n/a                               |
 
 Commands outside this table are outside the current production surface. New commands should map to the named MCP/API goal for this CLI. Command output should use Mailgun-provided fields, documented CLI-normalized fields, or stakeholder-approved workflow guidance.
+
+`preview issues` is a read-only drill-down over exactly one requested link,
+image, or accessibility result. `preview render` is a read-only single-client
+lookup; when both `--variant` and `--output` are supplied, it downloads that one
+image without exposing its signed URL and refuses to overwrite an existing file.
 
 ## Current architecture rules
 

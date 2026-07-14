@@ -70,6 +70,8 @@ mailgun inbox-placement result --result result_123 --json
 mailgun preview clients --json
 mailgun preview list --limit 10 --json
 mailgun preview result --test-id preview_123 --json
+mailgun preview issues preview_123 --check accessibility
+mailgun preview render preview_123 iphone16gmail_18 --variant portrait --output ./iphone.png
 mailgun preview run --subject "June campaign" --html ./rendered.html --dry-run --json
 mailgun preview run --subject "June campaign" --html ./rendered.html --yes --json
 
@@ -107,6 +109,16 @@ never recreates automatically after a timeout or uncertain outcome.
 and polls the requested structured checks. `preview result` safely resumes an
 existing test without creating anything.
 
+After the summary, `preview issues` turns a link, image, or accessibility result
+reference into individual failures with native impact, description, source
+location, target/snippet, and URL where available. It fetches only the selected
+check and omits passing records.
+
+`preview render` retrieves exactly one client result. Without download flags it
+lists metadata and available screenshot variants. Passing both `--variant` and
+`--output` downloads that image without printing its signed URL; downloads are
+limited to 25 MiB and refuse to overwrite an existing file.
+
 - HTML is file-only; inline HTML and stdin are not accepted.
 - Omitting `--clients` uses Mailgun's default client set. Use `preview clients`
   to discover explicit IDs.
@@ -120,6 +132,10 @@ existing test without creating anything.
   `instances` sums the reported occurrences.
 - `--reference-id` is a correlation value only. It is not an idempotency key or
   a guaranteed lookup field.
+- Screenshot observations are a separate evidence channel from Inspect's
+  structured findings. A render can support checks for clipping, overlap, image
+  loading, and qualitative legibility, but cannot verify alt text, semantic
+  roles, screen-reader behavior, or exact WCAG contrast ratios.
 - Mailgun's published V2 schema does not state an HTML maximum. Set
   `MAILGUN_PREVIEW_MAX_HTML_BYTES` only when you want an additional local limit.
 
