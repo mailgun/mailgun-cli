@@ -1,6 +1,6 @@
+import { performance } from 'node:perf_hooks';
 import type { DataGap } from '../../core/types.js';
 import { buildMailgunUrl, mailgunRequest } from '../../core/mailgun.js';
-import { CliError } from '../../cli/output.js';
 
 // Email Preview QA summary, mirroring the MCP composite output field-for-field:
 // the same upstream payloads normalize to the same counts, references, lifecycle
@@ -87,6 +87,34 @@ export interface PreviewQaOutput {
   data_gaps: DataGap[];
 }
 
+export type PreviewRunFailureKind = 'create_uncertain' | 'create_missing_id' | 'poll_failed';
+
+// Structured workflow failure for the command layer to render. Product code
+// records what happened; shell-specific recovery wording remains in commands/.
+export class PreviewRunError extends Error {
+  readonly kind: PreviewRunFailureKind;
+  readonly statusCode?: number;
+  readonly testId?: string;
+  readonly referenceId?: string;
+  readonly detail?: string;
+
+  constructor(params: {
+    kind: PreviewRunFailureKind;
+    statusCode?: number;
+    testId?: string;
+    referenceId?: string;
+    detail?: string;
+  }) {
+    super(params.kind);
+    this.name = 'PreviewRunError';
+    this.kind = params.kind;
+    this.statusCode = params.statusCode;
+    this.testId = params.testId;
+    this.referenceId = params.referenceId;
+    this.detail = params.detail;
+  }
+}
+
 const PRODUCT = 'Inspect' as const;
 
 // --- value helpers ---
@@ -109,9 +137,13 @@ function str(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-// Native severity/impact label, lowercased only. Blank/missing bucket as 'unknown'.
-function severityLabel(value: unknown): string {
-  const s = typeof value === 'string' ? value.trim().toLowerCase() : '';
+function statusToken(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+// Preserve native severity/impact spelling and casing. Blank/missing buckets as unknown.
+function severityBucket(value: unknown): string {
+  const s = typeof value === 'string' ? value.trim() : '';
   return s.length > 0 ? s : 'unknown';
 }
 
@@ -151,13 +183,24 @@ export interface CheckReference {
   resultId: string | null;
 }
 
-export function extractCheckResultIds(render: unknown): Record<CheckName, CheckReference> {
+export function extractCheckResultIds(
+  render: unknown,
+  requestedChecks?: ReadonlySet<CheckName>
+): Record<CheckName, CheckReference> {
   const cc = asRecord(asRecord(render).content_checking);
   const result = {} as Record<CheckName, CheckReference>;
   for (const name of CHECK_NAMES) {
     const raw = cc[name];
-    if (raw === null || raw === undefined) {
+    if (raw === null) {
       result[name] = { requested: false, hasErrors: false, resultId: null };
+      continue;
+    }
+    if (raw === undefined) {
+      result[name] = {
+        requested: requestedChecks ? requestedChecks.has(name) : true,
+        hasErrors: false,
+        resultId: null
+      };
       continue;
     }
     const node = asRecord(raw);
@@ -184,7 +227,7 @@ export function checkResultPath(name: CheckName, resultId: string): string {
 
 // --- check fetch outcome ---
 
-export type CheckFetchStatus = 'ok' | 'not_found' | 'error' | 'not_fetched';
+export type CheckFetchStatus = 'ok' | 'not_found' | 'not_fetched';
 
 export interface CheckFetch {
   status: CheckFetchStatus;
@@ -193,7 +236,7 @@ export interface CheckFetch {
 
 // Completion signal from the detail payload's meta.status (case-insensitive; missing = complete).
 export function detailStatus(payload: unknown): 'complete' | 'processing' {
-  const raw = severityLabel(asRecord(asRecord(payload).meta).status);
+  const raw = statusToken(asRecord(asRecord(payload).meta).status);
   if (
     raw.startsWith('process') ||
     raw.startsWith('pending') ||
@@ -212,23 +255,17 @@ export function isCheckTerminal(ref: CheckReference, fetch: CheckFetch): boolean
   if (ref.hasErrors) return true;
   if (ref.resultId === null) return false;
   if (fetch.status === 'ok') return detailStatus(fetch.payload) !== 'processing';
-  if (fetch.status === 'not_found' || fetch.status === 'error') return true;
+  if (fetch.status === 'not_found') return true;
   return false; // not_fetched
 }
 
-// Derived from the reference + detail fetch. `timedOut` only affects checks whose
-// reference never materialized.
-export function normalizeCheckLifecycle(
-  ref: CheckReference,
-  fetch: CheckFetch,
-  timedOut: boolean
-): CheckLifecycle {
+// A missing requested reference remains processing until the workflow deadline.
+export function normalizeCheckLifecycle(ref: CheckReference, fetch: CheckFetch): CheckLifecycle {
   if (!ref.requested) return 'not_requested';
   if (ref.hasErrors) return 'job_failed';
-  if (ref.resultId === null) return timedOut ? 'processing' : 'unavailable';
+  if (ref.resultId === null) return 'processing';
   if (fetch.status === 'ok') return detailStatus(fetch.payload) === 'processing' ? 'processing' : 'complete';
   if (fetch.status === 'not_found') return 'unavailable';
-  if (fetch.status === 'error') return 'unavailable';
   return 'processing'; // requested, referenced, but not fetched by the deadline
 }
 
@@ -250,7 +287,7 @@ function countFindingBuckets(entries: unknown[]): LinkImageCounts {
     const failures = asArray(record.failures);
     counts.failures += failures.length;
     for (const failure of failures) {
-      increment(counts.by_severity, severityLabel(asRecord(failure).impact));
+      increment(counts.by_severity, severityBucket(asRecord(failure).impact));
     }
   }
   return counts;
@@ -287,7 +324,7 @@ function countRuleGroups(
     const n = occurrences.length > 0 ? occurrences.length : 1;
     rules += 1;
     instances += n;
-    increment(bySeverity, severityLabel(record.impact), n);
+    increment(bySeverity, severityBucket(record.impact), n);
   }
   return { instances, rules, bySeverity };
 }
@@ -317,7 +354,7 @@ export function countAccessibilityIssues(payload: unknown): AccessibilityCounts 
 }
 
 interface CodeAnalysisCounts {
-  count: number;
+  count: number | null;
   instances: number;
   by_feature: Record<string, number>;
   application_support: Record<string, unknown>;
@@ -341,7 +378,7 @@ export function countCodeAnalysisIssues(payload: unknown): CodeAnalysisCounts {
     instances += instanceCount;
   }
 
-  const count = typeof meta.count === 'number' ? meta.count : features.length;
+  const count = typeof meta.count === 'number' && Number.isFinite(meta.count) ? meta.count : null;
 
   return {
     count,
@@ -401,6 +438,7 @@ export interface BuildOutputParams {
   fetches: Record<CheckName, CheckFetch>;
   timedOut: boolean;
   warnings?: PreviewWarning[];
+  requestedClients?: readonly string[];
 }
 
 export function buildPreviewQaOutput(params: BuildOutputParams): PreviewQaOutput {
@@ -426,26 +464,41 @@ export function buildPreviewQaOutput(params: BuildOutputParams): PreviewQaOutput
     });
   }
 
+  if (params.requestedClients) {
+    const presentClients = new Set([
+      ...renderState.completed,
+      ...renderState.processing,
+      ...renderState.bounced
+    ]);
+    const missingClients = params.requestedClients.filter((client) => !presentClients.has(client));
+    if (missingClients.length > 0) {
+      dataGaps.push({
+        code: 'requested_client_missing',
+        product: PRODUCT,
+        message: `${missingClients.length} requested client(s) did not appear in any render state: ${missingClients.join(', ')}.`,
+        impact: 'Per-client render evidence for these requested clients is unavailable.'
+      });
+    }
+  }
+
   const lifecycleFor = (name: CheckName): CheckLifecycle =>
-    normalizeCheckLifecycle(refs[name], fetches[name], timedOut);
+    normalizeCheckLifecycle(refs[name], fetches[name]);
 
   const addRefGap = (name: CheckName, lifecycle: CheckLifecycle): void => {
-    if (lifecycle === 'unavailable' && refs[name].requested) {
-      if (refs[name].resultId === null) {
-        dataGaps.push({
-          code: 'check_reference_missing',
-          product: PRODUCT,
-          message: `The ${name} check did not expose a result reference.`,
-          impact: `Detailed ${name} results cannot be retrieved for this test.`
-        });
-      } else {
-        dataGaps.push({
-          code: 'result_endpoint_unavailable',
-          product: PRODUCT,
-          message: `The ${name} result endpoint was unavailable.`,
-          impact: `Detailed ${name} results could not be retrieved and are not counted.`
-        });
-      }
+    if (refs[name].requested && refs[name].resultId === null && timedOut) {
+      dataGaps.push({
+        code: 'check_reference_missing',
+        product: PRODUCT,
+        message: `The ${name} check did not expose a result reference before the workflow deadline.`,
+        impact: `Detailed ${name} results are not yet available; resume with the same test id.`
+      });
+    } else if (lifecycle === 'unavailable' && refs[name].requested) {
+      dataGaps.push({
+        code: 'result_endpoint_unavailable',
+        product: PRODUCT,
+        message: `The ${name} result endpoint was unavailable.`,
+        impact: `Detailed ${name} results could not be retrieved and are not counted.`
+      });
     }
   };
 
@@ -479,7 +532,7 @@ export function buildPreviewQaOutput(params: BuildOutputParams): PreviewQaOutput
 
   const codeLifecycle = lifecycleFor('code_analysis');
   addRefGap('code_analysis', codeLifecycle);
-  const codeCounts =
+  const codeCounts: CodeAnalysisCounts =
     codeLifecycle === 'complete'
       ? countCodeAnalysisIssues(fetches.code_analysis.payload)
       : {
@@ -490,6 +543,15 @@ export function buildPreviewQaOutput(params: BuildOutputParams): PreviewQaOutput
           inbox_provider_support: {},
           market_support: {}
         };
+
+  if (codeLifecycle === 'complete' && codeCounts.count === null) {
+    dataGaps.push({
+      code: 'code_analysis_count_unavailable',
+      product: PRODUCT,
+      message: 'The code analysis result did not include a usable meta.count total.',
+      impact: 'The feature total is unavailable; per-feature instance counts are still reported.'
+    });
+  }
 
   if (timedOut) {
     dataGaps.push({
@@ -564,7 +626,7 @@ export function buildPreviewQaOutput(params: BuildOutputParams): PreviewQaOutput
       code_analysis: {
         status: codeLifecycle,
         result_id: refs.code_analysis.resultId,
-        count: codeCounts.count,
+        count: codeCounts.count ?? 0,
         instances: codeCounts.instances,
         by_feature: codeCounts.by_feature,
         application_support: codeCounts.application_support,
@@ -597,6 +659,7 @@ export interface PollParams {
   testId: string;
   timeoutMs: number;
   intervalMs?: number;
+  requestedChecks?: ReadonlySet<CheckName>;
 }
 
 export interface PollResult {
@@ -630,7 +693,8 @@ async function fetchCheckResults(
         const payload = await deps.request('GET', checkResultPath(name, ref.resultId));
         fetches[name] = { status: 'ok', payload };
       } catch (error) {
-        fetches[name] = { status: isNotFound(error) ? 'not_found' : 'error' };
+        if (isNotFound(error)) fetches[name] = { status: 'not_found' };
+        else throw error;
       }
     })
   );
@@ -645,7 +709,7 @@ export async function pollPreviewQa(params: PollParams, deps: PollDeps): Promise
   const statusPath = `/v2/preview/tests/${encodeURIComponent(params.testId)}`;
 
   let render: unknown = await deps.request('GET', statusPath);
-  let refs = extractCheckResultIds(render);
+  let refs = extractCheckResultIds(render, params.requestedChecks);
   let fetches = await fetchCheckResults(refs, deps);
   let timedOut = false;
 
@@ -659,7 +723,7 @@ export async function pollPreviewQa(params: PollParams, deps: PollDeps): Promise
     }
     await deps.sleep(interval);
     render = await deps.request('GET', statusPath);
-    refs = extractCheckResultIds(render);
+    refs = extractCheckResultIds(render, params.requestedChecks);
     fetches = await fetchCheckResults(refs, deps);
   }
 
@@ -671,10 +735,14 @@ export async function pollPreviewQa(params: PollParams, deps: PollDeps): Promise
 const DEFAULT_TIMEOUT_SECONDS = 120;
 const MAX_TIMEOUT_SECONDS = 600;
 
-export function clampTimeoutSeconds(value: number | undefined): number {
-  if (value === undefined || Number.isNaN(value)) return DEFAULT_TIMEOUT_SECONDS;
-  if (value < 0) return 0;
-  if (value > MAX_TIMEOUT_SECONDS) return MAX_TIMEOUT_SECONDS;
+export function resolveTimeoutSeconds(
+  value: number | undefined,
+  defaultSeconds = DEFAULT_TIMEOUT_SECONDS
+): number {
+  if (value === undefined) return defaultSeconds;
+  if (!Number.isInteger(value) || value < 0 || value > MAX_TIMEOUT_SECONDS) {
+    throw new RangeError(`timeout must be an integer between 0 and ${MAX_TIMEOUT_SECONDS} seconds`);
+  }
   return value;
 }
 
@@ -689,7 +757,7 @@ function liveDeps(apiKey: string, baseUrl: string): PollDeps {
         method: method as 'GET' | 'POST',
         ...(body !== undefined ? { body } : {})
       }),
-    now: () => Date.now(),
+    now: () => performance.now(),
     sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
   };
 }
@@ -701,7 +769,7 @@ export async function getPreviewQa(params: {
   timeoutSeconds?: number;
 }): Promise<PreviewQaOutput> {
   const deps = liveDeps(params.apiKey, params.baseUrl);
-  const timeoutMs = clampTimeoutSeconds(params.timeoutSeconds) * 1000;
+  const timeoutMs = resolveTimeoutSeconds(params.timeoutSeconds) * 1000;
   const poll = await pollPreviewQa({ testId: params.testId, timeoutMs }, deps);
   return buildPreviewQaOutput({
     testId: params.testId,
@@ -713,8 +781,8 @@ export async function getPreviewQa(params: {
 }
 
 // Create ONE preview test, then poll and summarize - the CLI's only write. The
-// create is issued once and never retried (V2 is not idempotent); an ambiguous
-// failure recommends reconciliation rather than a second create.
+// create is issued once and never retried (V2 is not idempotent). Failures carry
+// structured recovery context for the command layer to present.
 export async function runPreviewTest(params: {
   apiKey: string;
   baseUrl: string;
@@ -723,41 +791,53 @@ export async function runPreviewTest(params: {
 }): Promise<PreviewQaOutput> {
   const deps = liveDeps(params.apiKey, params.baseUrl);
   const body = buildPreviewCreateRequest(params.create);
-  const refHint = params.create.referenceId ? ` (reference_id ${params.create.referenceId})` : '';
 
   let created: unknown;
   try {
     created = await deps.request('POST', '/v2/preview/tests', body);
   } catch (error) {
     const status = (error as { statusCode?: number } | null)?.statusCode;
-    // A definitive HTTP response (4xx/5xx) — surface it as-is; never retry.
+    if (status === 429 || (typeof status === 'number' && status >= 500)) {
+      throw new PreviewRunError({
+        kind: 'create_uncertain',
+        statusCode: status,
+        referenceId: params.create.referenceId,
+        detail: error instanceof Error ? error.message : String(error)
+      });
+    }
+    // Other definitive HTTP responses preserve the established CLI error contract.
     if (typeof status === 'number' && status >= 400) throw error;
     // Ambiguous: the request may have reached Mailgun before failing.
-    throw new CliError(
-      `the preview test create request failed after it may have reached Mailgun - a test may have been created and a second create was NOT attempted; reconcile with 'mailgun preview list'${refHint} before retrying`
-    );
+    throw new PreviewRunError({
+      kind: 'create_uncertain',
+      referenceId: params.create.referenceId,
+      detail: error instanceof Error ? error.message : String(error)
+    });
   }
 
   const testId = extractCreatedTestId(created);
   if (testId === null) {
-    throw new CliError(
-      `the create response did not include a test id - reconcile with 'mailgun preview list'${refHint} before retrying`
-    );
+    throw new PreviewRunError({
+      kind: 'create_missing_id',
+      referenceId: params.create.referenceId
+    });
   }
 
   const warnings = normalizeWarnings(created);
-  const timeoutMs =
-    clampTimeoutSeconds(params.timeoutSeconds ?? RUN_DEFAULT_TIMEOUT_SECONDS) * 1000;
+  const timeoutMs = resolveTimeoutSeconds(params.timeoutSeconds, RUN_DEFAULT_TIMEOUT_SECONDS) * 1000;
+  const requestedChecks = new Set(params.create.contentChecks ?? CHECK_NAMES);
 
   let poll: PollResult;
   try {
-    poll = await pollPreviewQa({ testId, timeoutMs }, deps);
+    poll = await pollPreviewQa({ testId, timeoutMs, requestedChecks }, deps);
   } catch (error) {
     // The test WAS created; polling failure must not trigger a re-create.
-    const cause = error instanceof Error ? error.message : String(error);
-    throw new CliError(
-      `preview test ${testId} was created, but retrieving its status failed - resume with 'mailgun preview result ${testId}'. Cause: ${cause}`
-    );
+    throw new PreviewRunError({
+      kind: 'poll_failed',
+      statusCode: (error as { statusCode?: number } | null)?.statusCode,
+      testId,
+      detail: error instanceof Error ? error.message : String(error)
+    });
   }
 
   return buildPreviewQaOutput({
@@ -766,7 +846,8 @@ export async function runPreviewTest(params: {
     refs: poll.refs,
     fetches: poll.fetches,
     timedOut: poll.timedOut,
-    warnings
+    warnings,
+    requestedClients: params.create.clients
   });
 }
 

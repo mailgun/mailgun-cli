@@ -65,47 +65,40 @@ export function parseClientsList(value: unknown): string[] | undefined {
   if (typeof value !== 'string') {
     throw new UsageError('--clients must be a comma-separated list of client ids');
   }
-  const ids = value
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  const ids = value.split(',').map((s) => s.trim());
+  if (ids.some((id) => id.length === 0)) {
+    throw new UsageError('--clients contained a blank client id; omit the flag to use Mailgun defaults');
+  }
   if (ids.length === 0) {
     throw new UsageError('--clients was empty; omit it to use the Mailgun default client set');
   }
   return [...new Set(ids)];
 }
 
-const CONTENT_CHECK_NAMES = [
-  'link_validation',
-  'image_validation',
-  'accessibility',
-  'code_analysis'
-] as const;
-
 // Parse --content-checks. Undefined (omitted) means "run all four" and is
 // signalled by returning undefined so the builder applies its default. The
 // literal value "none" returns an empty array (run no checks). Unknown names are
 // a usage error.
-export function parseContentChecks(value: unknown): string[] | undefined {
+export function parseContentChecks(
+  value: unknown,
+  allowedNames: readonly string[]
+): string[] | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'string') {
     throw new UsageError('--content-checks must be a comma-separated list of check names, or "none"');
   }
-  const trimmed = value.trim().toLowerCase();
+  const trimmed = value.trim();
   if (trimmed === 'none') return [];
-  const names = trimmed
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-  if (names.length === 0) {
+  const names = trimmed.split(',').map((s) => s.trim());
+  if (names.some((name) => name.length === 0)) {
     throw new UsageError(
-      `--content-checks was empty; use "none" for no checks or omit it to run all of ${CONTENT_CHECK_NAMES.join(', ')}`
+      `--content-checks contained a blank check name; use "none" for no checks or omit it to run all of ${allowedNames.join(', ')}`
     );
   }
   for (const name of names) {
-    if (!(CONTENT_CHECK_NAMES as readonly string[]).includes(name)) {
+    if (!allowedNames.includes(name)) {
       throw new UsageError(
-        `--content-checks contains an unknown check '${name}'; valid names are ${CONTENT_CHECK_NAMES.join(', ')} (or "none")`
+        `--content-checks contains an unknown check '${name}'; valid names are ${allowedNames.join(', ')} (or "none")`
       );
     }
   }

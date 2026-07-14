@@ -83,6 +83,20 @@ test('link validation counts', () => {
   assert.deepEqual(c.by_severity, { critical: 1, unknown: 1 });
 });
 
+test('native severity labels preserve upstream spelling and casing', () => {
+  const counts = countLinkValidationIssues({
+    items: {
+      results: [
+        {
+          failures: [{ impact: ' Critical ' }, { impact: 'SERIOUS' }, { impact: '' }]
+        }
+      ]
+    }
+  });
+
+  assert.deepEqual(counts.by_severity, { Critical: 1, SERIOUS: 1, unknown: 1 });
+});
+
 test('image validation counts', () => {
   const c = countImageValidationIssues(IMAGE_RESULT);
   assert.equal(c.passes, 1);
@@ -171,7 +185,7 @@ test('render straggler does not block; reported as render_incomplete', () => {
   assert.ok(!out.data_gaps.some((g) => g.code === 'workflow_timed_out'));
 });
 
-test('missing reference yields unavailable + data gap; not_requested stays', () => {
+test('missing reference at the deadline stays processing and reports a data gap', () => {
   const refs = extractCheckResultIds(RENDER_CHECK_REFERENCE_MISSING);
   const out = buildPreviewQaOutput({
     testId: 'preview_test_013',
@@ -183,11 +197,54 @@ test('missing reference yields unavailable + data gap; not_requested stays', () 
       accessibility: { status: 'not_fetched' },
       code_analysis: okFetch(CODE_ANALYSIS_RESULT)
     },
-    timedOut: false
+    timedOut: true
   });
-  assert.equal(out.checks.image_validation.status, 'unavailable');
+  assert.equal(out.checks.image_validation.status, 'processing');
   assert.equal(out.checks.accessibility.status, 'not_requested');
   assert.ok(out.data_gaps.some((g) => g.code === 'check_reference_missing'));
+});
+
+test('missing code-analysis meta.count is not inferred from the feature array', () => {
+  const refs = extractCheckResultIds(RENDER_COMPLETE);
+  const codeResultWithoutCount = {
+    ...CODE_ANALYSIS_RESULT,
+    meta: { ...CODE_ANALYSIS_RESULT.meta, count: undefined }
+  };
+  const out = buildPreviewQaOutput({
+    testId: 'preview_test_001',
+    render: RENDER_COMPLETE,
+    refs,
+    fetches: {
+      link_validation: okFetch(LINK_RESULT),
+      image_validation: okFetch(IMAGE_RESULT),
+      accessibility: okFetch(ACCESSIBILITY_RESULT),
+      code_analysis: okFetch(codeResultWithoutCount)
+    },
+    timedOut: false
+  });
+
+  assert.equal(out.checks.code_analysis.count, 0);
+  assert.equal(out.checks.code_analysis.instances, 3);
+  assert.ok(out.data_gaps.some((gap) => gap.code === 'code_analysis_count_unavailable'));
+});
+
+test('explicit clients missing from render state are reported', () => {
+  const refs = extractCheckResultIds(RENDER_COMPLETE);
+  const out = buildPreviewQaOutput({
+    testId: 'preview_test_001',
+    render: RENDER_COMPLETE,
+    refs,
+    fetches: {
+      link_validation: okFetch(LINK_RESULT),
+      image_validation: okFetch(IMAGE_RESULT),
+      accessibility: okFetch(ACCESSIBILITY_RESULT),
+      code_analysis: okFetch(CODE_ANALYSIS_RESULT)
+    },
+    timedOut: false,
+    requestedClients: ['gmail_chrome', 'missing_client']
+  });
+
+  assert.ok(out.data_gaps.some((gap) => gap.code === 'requested_client_missing'));
 });
 
 test('timeout adds a workflow_timed_out data gap and processing lifecycle', () => {

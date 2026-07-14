@@ -1,13 +1,12 @@
 # @mailgun/cli
 
-An agent-first, read-only Mailgun CLI. It wraps a curated set of Mailgun
-endpoints — sending metrics, address validation, inbox placement, email
-preview, and a live delivery-event stream — behind a single binary with clean
-JSON output and a machine-readable `agent-context` schema.
+An agent-first CLI for working with Mailgun from terminals, scripts, CI systems,
+and coding agents. It provides one consistent command surface for understanding
+and operating a Mailgun account, with clean JSON output and a machine-readable
+`agent-context` schema.
 
-The CLI is a **read-only diagnostics and observability surface**. It never sends
-email or mutates account state; every command either reads data or streams
-events.
+Most commands are read-only. Write commands are labeled in `agent-context` and
+use the explicit, non-interactive guard described below.
 
 ## Requirements
 
@@ -67,9 +66,12 @@ mailgun validate-email --address user@example.com --provider-lookup true --json
 mailgun inbox-placement list --limit 10 --json
 mailgun inbox-placement result --result result_123 --json
 
-# Email preview (Inspect): discover test IDs, then fetch a result
+# Email preview (Inspect): discover clients/tests, run QA, or resume a result
+mailgun preview clients --json
 mailgun preview list --limit 10 --json
 mailgun preview result --test-id preview_123 --json
+mailgun preview run --subject "June campaign" --html ./rendered.html --dry-run --json
+mailgun preview run --subject "June campaign" --html ./rendered.html --yes --json
 
 # Live delivery events (single fetch or continuous --tail)
 mailgun events --domain acme.com --json
@@ -83,6 +85,49 @@ polls forward for new events every `--interval` milliseconds:
 ```bash
 mailgun events --domain acme.com --tail --limit 5 --interval 5000
 ```
+
+## Write commands
+
+Every write command requires exactly one of:
+
+- `--dry-run` to validate and summarize the action without credentials or network access;
+- `--yes` to execute without prompting.
+
+Passing both or neither is a usage error (exit `2`). Commands never prompt, so
+the behavior is deterministic in scripts and agent workflows.
+
+`preview run` is currently the only write command. It creates one remote Mailgun
+Inspect preview test and consumes preview quota; it does not send email. V2 does
+not document create idempotency, so the CLI sends at most one create request and
+never recreates automatically after a timeout or uncertain outcome.
+
+## Email Preview QA
+
+`preview run` accepts a subject and rendered HTML file, creates one preview test,
+and polls the requested structured checks. `preview result` safely resumes an
+existing test without creating anything.
+
+- HTML is file-only; inline HTML and stdin are not accepted.
+- Omitting `--clients` uses Mailgun's default client set. Use `preview clients`
+  to discover explicit IDs.
+- The four checks are `link_validation`, `image_validation`, `accessibility`, and
+  `code_analysis`. All run by default; pass a subset or `none` explicitly.
+- Check completion drives polling. Slow client screenshots do not block the
+  result and are reported through client state plus a `render_incomplete` gap.
+- Accessibility headline counts are issue instances; the corresponding
+  `*_rules` fields count distinct rules.
+- Code analysis `count` is Mailgun's `meta.count` feature total, while
+  `instances` sums the reported occurrences.
+- `--reference-id` is a correlation value only. It is not an idempotency key or
+  a guaranteed lookup field.
+- Mailgun's published V2 schema does not state an HTML maximum. Set
+  `MAILGUN_PREVIEW_MAX_HTML_BYTES` only when you want an additional local limit.
+
+JSON output matches the MCP composite summary: render counts and client IDs,
+per-check lifecycle and references, native severity/support breakdowns,
+warnings, and `data_gaps`. It deliberately contains no raw HTML, individual
+issue records, or Mailgun-authored overall pass/fail verdict. Consumers define
+their own gate from the reported evidence.
 
 ## Agent context
 

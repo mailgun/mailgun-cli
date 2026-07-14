@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pollPreviewQa, buildPreviewQaOutput, type PollDeps } from './preview-qa.js';
+import {
+  pollPreviewQa,
+  buildPreviewQaOutput,
+  resolveTimeoutSeconds,
+  type PollDeps
+} from './preview-qa.js';
 import { CliError } from '../../cli/output.js';
 import {
   RENDER_COMPLETE,
@@ -43,9 +48,13 @@ const RESULT_ROUTES = {
   '/v1/inspect/analyze/code_001': CODE_ANALYSIS_RESULT
 };
 
-async function run(routes: Record<string, Route>, timeoutMs: number) {
+async function run(
+  routes: Record<string, Route>,
+  timeoutMs: number,
+  requestedChecks?: ReadonlySet<'link_validation' | 'image_validation' | 'accessibility' | 'code_analysis'>
+) {
   const { deps, requests } = fakeDeps(routes);
-  const poll = await pollPreviewQa({ testId: 'preview_test_001', timeoutMs }, deps);
+  const poll = await pollPreviewQa({ testId: 'preview_test_001', timeoutMs, requestedChecks }, deps);
   const output = buildPreviewQaOutput({
     testId: 'preview_test_001',
     render: poll.render,
@@ -125,4 +134,55 @@ test('unexpected 404 on a result endpoint marks the check unavailable', async ()
   assert.equal(output.checks.accessibility.status, 'not_requested');
   assert.equal(output.checks.code_analysis.status, 'unavailable');
   assert.ok(output.data_gaps.some((g) => g.code === 'result_endpoint_unavailable'));
+});
+
+test('an absent requested check remains processing until the deadline', async () => {
+  const renderWithoutLinkReference = {
+    completed: ['gmail_chrome'],
+    processing: [],
+    bounced: [],
+    content_checking: {
+      image_validation: null,
+      accessibility: null,
+      code_analysis: null
+    }
+  };
+
+  const { output, requests } = await run(
+    { [STATUS_PATH]: renderWithoutLinkReference },
+    0,
+    new Set(['link_validation'])
+  );
+
+  assert.equal(output.timed_out, true);
+  assert.equal(output.checks.link_validation.status, 'processing');
+  assert.ok(output.data_gaps.some((gap) => gap.code === 'check_reference_missing'));
+  assert.ok(output.data_gaps.some((gap) => gap.code === 'workflow_timed_out'));
+  assert.equal(requests.filter((request) => request === `GET ${STATUS_PATH}`).length, 1);
+});
+
+test('a non-404 detail failure remains a runtime error', async () => {
+  const error = new CliError('Mailgun API returned 500', 1, 500);
+  const { deps } = fakeDeps({
+    [STATUS_PATH]: RENDER_COMPLETE,
+    '/v1/inspect/links/link_001': () => {
+      throw error;
+    },
+    '/v1/inspect/images/image_001': IMAGE_RESULT,
+    '/v1/inspect/accessibility/access_001': ACCESSIBILITY_RESULT,
+    '/v1/inspect/analyze/code_001': CODE_ANALYSIS_RESULT
+  });
+
+  await assert.rejects(
+    pollPreviewQa({ testId: 'preview_test_001', timeoutMs: 30_000 }, deps),
+    /Mailgun API returned 500/
+  );
+});
+
+test('the product boundary rejects invalid timeouts instead of clamping them', () => {
+  assert.equal(resolveTimeoutSeconds(undefined), 120);
+  assert.equal(resolveTimeoutSeconds(600), 600);
+  for (const invalid of [-1, 600.1, 601, Number.NaN]) {
+    assert.throws(() => resolveTimeoutSeconds(invalid), /integer between 0 and 600/);
+  }
 });

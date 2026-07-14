@@ -1,9 +1,9 @@
 // Shared Email Preview QA contract fixtures (revised after live validation).
 //
-// Byte-identical between `mailgun-mcp-server` (test/fixtures/) and `mailgun-cli`
-// (src/fixtures/); the same fixture must normalize to equivalent fields in both,
-// so keep the two copies in sync. Dependency-free plain object literals so both
-// Vitest (MCP) and node:test (CLI) can consume them without shims.
+// Payload literals are mirrored in `mailgun-mcp-server` (test/fixtures/). The
+// same payloads must normalize to equivalent fields in both repositories; prose
+// comments may differ. Dependency-free object literals let Vitest (MCP) and
+// node:test (CLI) consume them without shims.
 //
 // Grounded in real V2 responses (live US demo account, 2026-07-10); values are
 // synthetic/trimmed and safe to commit. Validated facts encoded here:

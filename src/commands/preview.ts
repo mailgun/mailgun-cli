@@ -16,30 +16,29 @@ import {
   type PreviewClientsOutput
 } from '../lib/products/inspect/preview.js';
 import {
+  CHECK_NAMES,
   getPreviewQa,
   runPreviewTest,
+  PreviewRunError,
   type CheckName,
   type PreviewCreateInput,
   type PreviewQaOutput
 } from '../lib/products/inspect/preview-qa.js';
 import { addApiOptions } from './shared-options.js';
-import { chalkFor, handleCommandError, printError, printJSON, UsageError } from '../lib/cli/output.js';
+import { chalkFor, CliError, handleCommandError, printError, printJSON, UsageError } from '../lib/cli/output.js';
 import { resolveWriteMode } from '../lib/cli/write-guard.js';
 import { createSpinner } from '../lib/cli/spinner.js';
 import type { CommandDescriptor } from './descriptor.js';
 
-// HTML payload ceiling. The true Inspect limit is unconfirmed, so enforce a
-// conservative, overridable bound (MAILGUN_PREVIEW_MAX_HTML_BYTES) rather than
-// hard-coding an unverified number.
-const DEFAULT_MAX_HTML_BYTES = 2 * 1024 * 1024;
-
-function maxHtmlBytes(): number {
+// Mailgun's published V2 schema does not define an HTML maximum. Operators may
+// configure a local preflight ceiling without presenting it as upstream policy.
+function maxHtmlBytes(): number | null {
   const raw = process.env.MAILGUN_PREVIEW_MAX_HTML_BYTES;
   if (raw !== undefined && /^\d+$/.test(raw.trim())) {
     const parsed = Number(raw.trim());
     if (parsed > 0) return parsed;
   }
-  return DEFAULT_MAX_HTML_BYTES;
+  return null;
 }
 
 interface HtmlSource {
@@ -69,9 +68,9 @@ function readHtmlSource(pathValue: unknown): HtmlSource {
   }
   const bytes = Buffer.byteLength(html, 'utf8');
   const limit = maxHtmlBytes();
-  if (bytes > limit) {
+  if (limit !== null && bytes > limit) {
     throw new UsageError(
-      `--html file '${path}' is ${bytes} bytes, over the ${limit}-byte limit (override with MAILGUN_PREVIEW_MAX_HTML_BYTES)`
+      `--html file '${path}' is ${bytes} bytes, over the configured ${limit}-byte MAILGUN_PREVIEW_MAX_HTML_BYTES limit`
     );
   }
   const sha256 = createHash('sha256').update(html, 'utf8').digest('hex');
@@ -333,14 +332,11 @@ function registerResult(parent: Command): void {
 }
 
 interface DryRunSummary {
-  action: 'preview run';
-  will_create_remote_test: true;
-  consumes_quota: true;
-  sends_email: false;
+  dry_run: true;
+  action: 'run_email_preview_qa';
+  will_consume_quota: true;
   subject: string;
-  html_path: string;
-  html_bytes: number;
-  html_sha256: string;
+  source: { type: 'html'; path: string; bytes: number; sha256: string };
   content_checks: string[];
   timeout_seconds: number;
   clients?: string[];
@@ -354,16 +350,12 @@ function buildDryRunSummary(
   timeoutSeconds: number
 ): DryRunSummary {
   const summary: DryRunSummary = {
-    action: 'preview run',
-    will_create_remote_test: true,
-    consumes_quota: true,
-    sends_email: false,
+    dry_run: true,
+    action: 'run_email_preview_qa',
+    will_consume_quota: true,
     subject: create.subject,
-    html_path: source.path,
-    html_bytes: source.bytes,
-    html_sha256: source.sha256,
-    // undefined contentChecks means "all four"; the builder default.
-    content_checks: create.contentChecks ? [...create.contentChecks] : ['(all)'],
+    source: { type: 'html', path: source.path, bytes: source.bytes, sha256: source.sha256 },
+    content_checks: create.contentChecks ? [...create.contentChecks] : [...CHECK_NAMES],
     timeout_seconds: timeoutSeconds
   };
   if (create.clients && create.clients.length > 0) summary.clients = [...create.clients];
@@ -372,14 +364,39 @@ function buildDryRunSummary(
   return summary;
 }
 
+function previewRunCliError(error: PreviewRunError): CliError {
+  const referenceCorrelationNote = error.referenceId
+    ? ` reference_id '${error.referenceId}' is correlation only and cannot confirm whether a test was created.`
+    : '';
+
+  if (error.kind === 'poll_failed') {
+    return new CliError(
+      `preview test ${error.testId} was created, but retrieving its status failed - resume with 'mailgun preview result ${error.testId}'. Cause: ${error.detail ?? 'unknown error'}`,
+      1,
+      error.statusCode
+    );
+  }
+
+  const cause = error.detail ? ` Cause: ${error.detail}` : '';
+  const lead =
+    error.kind === 'create_missing_id'
+      ? 'the create response did not include a test id'
+      : 'the preview create did not complete cleanly and a test may have been created';
+  return new CliError(
+    `${lead}, and no second create was attempted. Inspect 'mailgun preview list' manually before deciding whether to create another test.${referenceCorrelationNote}${cause}`,
+    1,
+    error.statusCode
+  );
+}
+
 function printDryRun(summary: DryRunSummary, opts: { json?: boolean; quiet?: boolean }): void {
   const chalk = chalkFor(opts);
   process.stdout.write(`${chalk.bold('preview run (dry run)')}\n`);
-  process.stdout.write(`  ${chalk.dim('this WILL create a remote Inspect test and consume preview quota; it does NOT send email')}\n\n`);
+  process.stdout.write(`  ${chalk.dim('executing this request will create a remote Inspect test and consume preview quota; it will not send email')}\n\n`);
   process.stdout.write(`  subject         ${summary.subject}\n`);
-  process.stdout.write(`  html path       ${summary.html_path}\n`);
-  process.stdout.write(`  html bytes      ${summary.html_bytes}\n`);
-  process.stdout.write(`  html sha256     ${summary.html_sha256}\n`);
+  process.stdout.write(`  html path       ${summary.source.path}\n`);
+  process.stdout.write(`  html bytes      ${summary.source.bytes}\n`);
+  process.stdout.write(`  html sha256     ${summary.source.sha256}\n`);
   process.stdout.write(
     `  clients         ${summary.clients ? summary.clients.join(', ') : 'Mailgun defaults'}\n`
   );
@@ -397,7 +414,7 @@ function registerRun(parent: Command): void {
     .option('--html <file>', 'path to the HTML email file to test (required)')
     .option('--clients <ids>', 'comma-separated client ids (default: Mailgun default clients)')
     .option('--content-checks <names>', 'comma-separated checks or "none" (default: all four)')
-    .option('--reference-id <id>', 'caller-supplied id echoed back for reconciliation')
+    .option('--reference-id <id>', 'caller-supplied correlation id (not an idempotency or lookup key)')
     .option('--timeout <seconds>', 'max seconds to poll after creating (0-600, default 300)')
     .option('--dry-run', 'validate and summarize the request without creating anything')
     .option('--yes', 'create the preview test (consumes quota)')
@@ -422,7 +439,7 @@ function registerRun(parent: Command): void {
       if (subject === '') throw new UsageError('--subject is required and must be non-empty');
       const source = readHtmlSource(opts.html);
       const clients = parseClientsList(opts.clients);
-      const contentChecks = parseContentChecks(opts.contentChecks) as CheckName[] | undefined;
+      const contentChecks = parseContentChecks(opts.contentChecks, CHECK_NAMES) as CheckName[] | undefined;
       const referenceId =
         typeof opts.referenceId === 'string' && opts.referenceId.trim() !== ''
           ? opts.referenceId.trim()
@@ -442,12 +459,18 @@ function registerRun(parent: Command): void {
       // 4) Execute: one POST, then GET-only polling.
       const runtime = resolveRuntime(command, { requireApiKey: true });
       spinner.start('Creating preview test...');
-      const output = await runPreviewTest({
-        apiKey: runtime.apiKey!,
-        baseUrl: runtime.baseUrl,
-        create,
-        timeoutSeconds
-      });
+      let output: PreviewQaOutput;
+      try {
+        output = await runPreviewTest({
+          apiKey: runtime.apiKey!,
+          baseUrl: runtime.baseUrl,
+          create,
+          timeoutSeconds
+        });
+      } catch (error) {
+        if (error instanceof PreviewRunError) throw previewRunCliError(error);
+        throw error;
+      }
       spinner.stop();
 
       if (runtime.json) printJSON(output);

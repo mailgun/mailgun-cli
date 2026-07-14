@@ -18,8 +18,6 @@ Design intent:
 
 ## Current command surface
 
-The current surface is read-only:
-
 | CLI command              | Product  | MCP companion                    | Upstream API                      |
 | ------------------------ | -------- | -------------------------------- | --------------------------------- |
 | `metrics summary`        | Send     | `get_metrics_summary`            | `POST /v1/analytics/metrics`      |
@@ -27,7 +25,9 @@ The current surface is read-only:
 | `inbox-placement list`   | Optimize | CLI discovery helper             | `GET /v4/inbox/results`           |
 | `inbox-placement result` | Optimize | `get_inbox_placement_result`     | `GET /v4/inbox/results/{id}`      |
 | `preview list`           | Inspect  | CLI discovery helper             | `GET /v2/preview/tests`           |
-| `preview result`         | Inspect  | `get_preview_result`             | `GET /v2/preview/tests/{test_id}` |
+| `preview clients`        | Inspect  | `list_preview_clients`           | `GET /v1/preview/tests/clients`   |
+| `preview result`         | Inspect  | `get_email_preview_qa`           | Preview status + check details    |
+| `preview run`            | Inspect  | `run_email_preview_qa`           | `POST /v2/preview/tests` + reads  |
 | `events`                 | Send     | CLI utility                      | `POST /v1/analytics/logs`         |
 | `agent-context`          | n/a      | CLI introspection                | n/a                               |
 
@@ -41,7 +41,10 @@ Commander.js is the current parser/router. The architecture lives in the command
 
 ### Read/write posture
 
-The current production surface is read-only. Future write commands should require `--dry-run` and either `--yes` or interactive confirmation.
+Most production commands are read-only. `preview run` is a write because it
+creates a remote quota-consuming Inspect test. Every write command must use the
+shared non-interactive guard: exactly one of `--dry-run` or `--yes` is required.
+Dry runs need no credentials and make no requests; execution never prompts.
 
 ### Authentication and runtime inputs
 
@@ -157,10 +160,24 @@ Important invariants:
 
 ### `mailgun preview result`
 
-- CLI equivalent of MCP `get_preview_result`, with a reference-update note.
-- CLI uses `GET /v2/preview/tests/{test_id}`.
-- Normalizes client completion/processing/bounced state and content-checking links.
-- If Mailgun confirms v2 as the live-correct Inspect path, record that source of truth across MCP/spec references.
+- CLI equivalent of MCP `get_email_preview_qa`.
+- Polls `GET /v2/preview/tests/{test_id}`, then retrieves referenced link,
+  image, accessibility, and code-analysis detail payloads.
+- Normalizes render state, check lifecycle, counts, references, warnings, and
+  data gaps without producing a pass/fail verdict.
+- Requested checks drive completion; client rendering never blocks the result.
+- Missing check references remain processing until the deadline. A detail 404
+  becomes unavailable evidence; all other detail failures remain runtime errors.
+
+### `mailgun preview run`
+
+- CLI equivalent of MCP `run_email_preview_qa` and the only current write command.
+- Accepts rendered HTML from a file and sends at most one create POST.
+- Requires exactly one of `--dry-run` or `--yes`; never prompts.
+- Defaults to all four checks and Mailgun's default clients.
+- Threads the explicit check/client selection through normalization so omitted
+  upstream evidence cannot silently disappear.
+- Treats `reference_id` as correlation only, never idempotency or guaranteed lookup.
 
 ### `mailgun events`
 
@@ -186,7 +203,7 @@ Documented for planning. Move an item into the current command surface when the 
 | Optimize  | `optimize/monitoring.ts`               | `blocklist status`, reputation signals | `/v1/monitoring/*`, `/v1/maverick-score/*`                   |
 | Optimize  | `optimize/inbox-placement.ts` (extend) | `inbox-placement run`                  | `POST /v4/inbox/tests`                                       |
 | Inspect   | `inspect/content-checks.ts`            | `spam-risk report`                     | `/v1/inspect/links|images|accessibility|analyze/*`           |
-| Inspect   | `inspect/preview.ts` (extend)          | `preview download`, `preview run`      | exports, `POST /v2/preview/tests`                            |
+| Inspect   | `inspect/preview.ts` (extend)          | `preview download`                     | exports                                                       |
 | Validate  | `validate/bulk.ts`                     | future bulk validation                 | `/v4/address/validate/bulk/*`                                |
 | Workflows | `workflows/preflight.ts`               | `preflight`                            | composes Validate + Optimize + Inspect modules               |
 | Workflows | `workflows/investigate.ts`             | investigate (name TBD)                 | composes Send + optional Optimize                            |
