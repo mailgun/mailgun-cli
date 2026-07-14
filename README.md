@@ -97,7 +97,7 @@ Passing both or neither is a usage error (exit `2`). Commands never prompt, so
 the behavior is deterministic in scripts and agent workflows.
 
 `preview run` is currently the only write command. It creates one remote Mailgun
-Inspect preview test and consumes preview quota; it does not send email. V2 does
+Inspect preview test and consumes preview quota. V2 does
 not document create idempotency, so the CLI sends at most one create request and
 never recreates automatically after a timeout or uncertain outcome.
 

@@ -218,6 +218,26 @@ test('preview run --dry-run makes zero network calls, needs no api key, and neve
   }
 });
 
+test('preview run human dry-run warns about quota without repeating no-send messaging', async () => {
+  const file = withHtmlFile(SAMPLE_HTML);
+  try {
+    const result = await runCli([
+      'preview',
+      'run',
+      '--subject',
+      'June',
+      '--html',
+      file.path,
+      '--dry-run'
+    ]);
+    assert.equal(result.code, 0);
+    assert.match(result.stdout, /consume preview quota/i);
+    assert.doesNotMatch(result.stdout, /send email/i);
+  } finally {
+    file.cleanup();
+  }
+});
+
 test('preview run --yes issues exactly one POST then polls to a complete summary', async () => {
   const file = withHtmlFile(SAMPLE_HTML);
   const server = await startMockServer(CREATE_ROUTES);

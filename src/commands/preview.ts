@@ -392,7 +392,7 @@ function previewRunCliError(error: PreviewRunError): CliError {
 function printDryRun(summary: DryRunSummary, opts: { json?: boolean; quiet?: boolean }): void {
   const chalk = chalkFor(opts);
   process.stdout.write(`${chalk.bold('preview run (dry run)')}\n`);
-  process.stdout.write(`  ${chalk.dim('executing this request will create a remote Inspect test and consume preview quota; it will not send email')}\n\n`);
+  process.stdout.write(`  ${chalk.dim('executing this request will create a remote Inspect test and consume preview quota')}\n\n`);
   process.stdout.write(`  subject         ${summary.subject}\n`);
   process.stdout.write(`  html path       ${summary.source.path}\n`);
   process.stdout.write(`  html bytes      ${summary.source.bytes}\n`);
