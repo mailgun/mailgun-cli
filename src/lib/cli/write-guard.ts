@@ -2,13 +2,10 @@ import { UsageError } from './output.js';
 
 export type WriteMode = 'dry-run' | 'execute';
 
-// Reusable guard for write commands. It forces the caller to make intent
-// explicit: exactly one of --dry-run (validate + summarize, never touches the
-// network) or --yes (perform the write). Passing both or neither is a usage
-// error (exit 2) raised before any credentials are read or requests are made.
-//
-// This guard NEVER prompts. It is the intended pattern for every future CLI
-// write command, so keep it free of command-specific logic.
+// Reusable guard for write commands: exactly one of --dry-run (validate +
+// summarize, no network) or --yes (perform the write); both or neither is a usage
+// error (exit 2) before any credentials or requests. Never prompts; the intended
+// pattern for future CLI writes, so keep it free of command-specific logic.
 export function resolveWriteMode(opts: { dryRun?: boolean; yes?: boolean }): WriteMode {
   const dryRun = opts.dryRun === true;
   const yes = opts.yes === true;

@@ -28,10 +28,9 @@ import { resolveWriteMode } from '../lib/cli/write-guard.js';
 import { createSpinner } from '../lib/cli/spinner.js';
 import type { CommandDescriptor } from './descriptor.js';
 
-// HTML payload ceiling. This is a RELEASE GATE (spec §9.4, §24.1): the true
-// Inspect limit is unconfirmed, so we enforce a conservative, overridable bound
-// rather than hard-coding an unverified number. Override with
-// MAILGUN_PREVIEW_MAX_HTML_BYTES for local experimentation.
+// HTML payload ceiling. The true Inspect limit is unconfirmed, so enforce a
+// conservative, overridable bound (MAILGUN_PREVIEW_MAX_HTML_BYTES) rather than
+// hard-coding an unverified number.
 const DEFAULT_MAX_HTML_BYTES = 2 * 1024 * 1024;
 
 function maxHtmlBytes(): number {

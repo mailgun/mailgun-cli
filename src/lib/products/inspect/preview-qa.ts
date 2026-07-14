@@ -2,11 +2,9 @@ import type { DataGap } from '../../core/types.js';
 import { buildMailgunUrl, mailgunRequest } from '../../core/mailgun.js';
 import { CliError } from '../../cli/output.js';
 
-// Email Preview QA summary. This mirrors the MCP get_email_preview_qa composite
-// output field-for-field (spec §12, §16.1): the same upstream payloads must
-// normalize to the same counts, references, lifecycle states, and data-gap
-// codes in both surfaces. It reports mechanical counts and result references
-// only — never a pass/fail verdict, raw email content, or individual issues.
+// Email Preview QA summary, mirroring the MCP composite output field-for-field:
+// the same upstream payloads normalize to the same counts, references, lifecycle
+// states, and data-gap codes. Mechanical counts and references only, no verdict.
 
 export type RenderStatus = 'complete' | 'processing' | 'partial' | 'unknown';
 
@@ -43,8 +41,7 @@ export interface LinkImageCheckSummary {
 export interface AccessibilityCheckSummary {
   status: CheckLifecycle;
   result_id: string | null;
-  // Headline counts are INSTANCE-level (one WCAG problem occurrence); rule counts
-  // are the number of distinct rules that flagged, kept as a secondary signal.
+  // Headline counts are instance-level; *_rules are distinct-rule counts.
   failures: number;
   failure_rules: number;
   needs_review: number;
@@ -53,16 +50,13 @@ export interface AccessibilityCheckSummary {
   needs_review_by_severity: Record<string, number>;
 }
 
-// Support-breakdown objects are passed through from the authoritative analyze
-// `meta` block (e.g. { supported, partial_support, unsupported, unknown }); we do
-// not recompute them.
+// Passed through from the analyze `meta` block; not recomputed.
 export type SupportBreakdown = Record<string, unknown>;
 
 export interface CodeAnalysisCheckSummary {
   status: CheckLifecycle;
   result_id: string | null;
-  // `count` is the canonical total from analyze `meta.count` (== number of
-  // detected features). `instances` is the sum of per-feature occurrences.
+  // count = analyze meta.count (feature total); instances = sum of occurrences.
   count: number;
   instances: number;
   by_feature: Record<string, number>;
@@ -115,8 +109,7 @@ function str(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-// Native severity/impact label, case-normalized only (never mapped onto a shared
-// Mailgun scale). Missing/blank labels bucket as "unknown".
+// Native severity/impact label, lowercased only. Blank/missing bucket as 'unknown'.
 function severityLabel(value: unknown): string {
   const s = typeof value === 'string' ? value.trim().toLowerCase() : '';
   return s.length > 0 ? s : 'unknown';
@@ -198,11 +191,7 @@ export interface CheckFetch {
   payload?: unknown;
 }
 
-// Read the per-check completion signal from the DETAIL payload's meta.status.
-// The status/render endpoint's per-check meta can be stale, so we trust the
-// detail payload. Casing is inconsistent across checks ("Completed" vs
-// "Complete"), so match case-insensitively by prefix. A missing meta.status on a
-// 200 response is treated as complete (we have a materialized payload).
+// Completion signal from the detail payload's meta.status (case-insensitive; missing = complete).
 export function detailStatus(payload: unknown): 'complete' | 'processing' {
   const raw = severityLabel(asRecord(asRecord(payload).meta).status);
   if (
@@ -216,11 +205,8 @@ export function detailStatus(payload: unknown): 'complete' | 'processing' {
   return 'complete';
 }
 
-// True once a requested check has reached a state we will not poll past: its job
-// errored, its detail payload is complete, or its detail endpoint is
-// unavailable. A check whose reference has not materialized yet, or whose detail
-// payload still reports "processing", is NOT terminal. Checks are independent of
-// per-client rendering, so a slow render never keeps a settled check pending.
+// A requested check is terminal once its job errored, its detail is complete, or
+// its endpoint is unavailable. Independent of per-client rendering.
 export function isCheckTerminal(ref: CheckReference, fetch: CheckFetch): boolean {
   if (!ref.requested) return true;
   if (ref.hasErrors) return true;
@@ -230,9 +216,8 @@ export function isCheckTerminal(ref: CheckReference, fetch: CheckFetch): boolean
   return false; // not_fetched
 }
 
-// Lifecycle is derived from the reference + the detail fetch outcome. `timedOut`
-// only affects checks whose reference never materialized: at a timeout they are
-// still "processing"; otherwise a missing reference is genuinely "unavailable".
+// Derived from the reference + detail fetch. `timedOut` only affects checks whose
+// reference never materialized.
 export function normalizeCheckLifecycle(
   ref: CheckReference,
   fetch: CheckFetch,
@@ -288,10 +273,8 @@ interface AccessibilityCounts {
   needs_review_by_severity: Record<string, number>;
 }
 
-// Accessibility failures/needs_review are grouped by RULE, each carrying an
-// instances[] array. We count INSTANCES as the headline (one occurrence of a
-// problem) and keep the rule count as a secondary signal. A rule entry with no
-// instances[] counts as a single occurrence.
+// Rules carry an instances[] array. Count instances as the headline and rules as
+// a secondary signal; a rule with no instances[] counts as one occurrence.
 function countRuleGroups(
   entries: unknown[]
 ): { instances: number; rules: number; bySeverity: Record<string, number> } {
@@ -342,11 +325,8 @@ interface CodeAnalysisCounts {
   market_support: Record<string, unknown>;
 }
 
-// Code-analysis counting uses the authoritative analyze `meta` block confirmed
-// against the live V2 API: `meta.count` is the canonical total (== number of
-// detected features), and `meta.*_support` are precomputed aggregates we pass
-// through verbatim. `instances` (sum of per-feature occurrences) and `by_feature`
-// are derived directly from items.features for drill-down.
+// meta.count is the canonical total (feature count); meta.*_support pass through
+// verbatim. instances/by_feature are derived from items.features for drill-down.
 export function countCodeAnalysisIssues(payload: unknown): CodeAnalysisCounts {
   const meta = asRecord(asRecord(payload).meta);
   const features = asArray(asRecord(asRecord(payload).items).features);
@@ -388,16 +368,13 @@ export interface PreviewCreateInput {
   subject: string;
   html: string;
   clients?: readonly string[];
-  // Which structured checks to enable. Undefined defaults to all four; an empty
-  // array means "no checks".
+  // Undefined defaults to all four; an empty array means 'no checks'.
   contentChecks?: readonly CheckName[];
   referenceId?: string;
 }
 
-// Build the JSON body for POST /v2/preview/tests. HTML is the only supported
-// source (spec §9.1). `clients` is omitted when absent, `content_checking`
-// always sends explicit booleans for all four checks, and `reference_id` is
-// omitted when absent (spec §10). This mirrors the MCP composite byte-for-byte.
+// Body for POST /v2/preview/tests. HTML-only source; content_checking sends
+// explicit booleans for all four; clients/reference_id omitted when absent.
 export function buildPreviewCreateRequest(input: PreviewCreateInput): Record<string, unknown> {
   const body: Record<string, unknown> = { subject: input.subject, html: input.html };
   if (input.clients && input.clients.length > 0) body.clients = [...input.clients];
@@ -439,9 +416,7 @@ export function buildPreviewQaOutput(params: BuildOutputParams): PreviewQaOutput
       impact: 'Per-client completion status becomes available once the preview finishes processing.'
     });
   } else if (renderState.processing.length > 0) {
-    // Per-client rendering is independent of content checks: a slow/stuck client
-    // does not block the result. We report it as a non-fatal gap (mirroring the
-    // Inspect UI, which marks missing clients rather than blocking).
+    // Slow/stuck client renders don't block results; report as a non-fatal gap (like the Inspect UI).
     dataGaps.push({
       code: 'render_incomplete',
       product: PRODUCT,
@@ -637,9 +612,8 @@ function isNotFound(error: unknown): boolean {
   return (error as { statusCode?: number } | null)?.statusCode === 404;
 }
 
-// Fetch the referenced structured-check results concurrently (bounded — at most
-// four checks). A requested check with no reference yet, or whose job errored, is
-// left unfetched. Independent of per-client rendering.
+// Fetch referenced check results concurrently (at most four). Unreferenced or
+// errored checks are left unfetched.
 async function fetchCheckResults(
   refs: Record<CheckName, CheckReference>,
   deps: PollDeps
@@ -663,10 +637,8 @@ async function fetchCheckResults(
   return fetches;
 }
 
-// Poll until every REQUESTED content check reaches a terminal state (complete,
-// job_failed, or unavailable) or the deadline passes. Completion is driven by the
-// checks, NOT by per-client rendering: a slow/stuck client can keep the render
-// "processing" indefinitely, so we never block on it (mirrors the Inspect UI).
+// Poll until every requested check is terminal or the deadline passes. Completion
+// is driven by checks, not per-client rendering (a slow client never blocks).
 export async function pollPreviewQa(params: PollParams, deps: PollDeps): Promise<PollResult> {
   const interval = params.intervalMs ?? POLL_INTERVAL_MS;
   const deadline = deps.now() + params.timeoutMs;
@@ -706,8 +678,8 @@ export function clampTimeoutSeconds(value: number | undefined): number {
   return value;
 }
 
-// Default polling deadline for `preview run` create+poll (spec §14). Longer than
-// the read default because the render starts empty right after creation.
+// Default deadline for `preview run` create+poll; longer than the read default
+// because the render starts empty right after creation.
 const RUN_DEFAULT_TIMEOUT_SECONDS = 300;
 
 function liveDeps(apiKey: string, baseUrl: string): PollDeps {
@@ -740,10 +712,9 @@ export async function getPreviewQa(params: {
   });
 }
 
-// Create ONE preview test, then poll and summarize. This is the CLI's only write.
-// The create is issued exactly once and never retried (V2 creation is not
-// idempotent). On an ambiguous transport failure the test may already exist, so
-// we report that and recommend reconciliation rather than creating a second one.
+// Create ONE preview test, then poll and summarize - the CLI's only write. The
+// create is issued once and never retried (V2 is not idempotent); an ambiguous
+// failure recommends reconciliation rather than a second create.
 export async function runPreviewTest(params: {
   apiKey: string;
   baseUrl: string;
