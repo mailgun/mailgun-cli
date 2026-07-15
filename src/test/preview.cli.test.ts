@@ -323,6 +323,64 @@ test('preview render with --output chooses the API default screenshot without gu
   }
 });
 
+test('preview render retries a temporarily early screenshot asset without another preview request', async () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+  let assetRequests = 0;
+  const server = await startMockServer([
+    {
+      method: 'GET',
+      path: '/v2/preview/tests/preview_test_001/results/gmail_chrome',
+      json: (request: RecordedRequest) => ({
+        gmail_chrome: {
+          ...CLIENT_RESULT.gmail_chrome,
+          screenshots: {
+            default: `http://${request.headers.host}/signed/default.png?token=secret`
+          }
+        }
+      })
+    },
+    {
+      method: 'GET',
+      path: '/signed/default.png',
+      status: () => {
+        assetRequests += 1;
+        return assetRequests === 1 ? 425 : 200;
+      },
+      body: png,
+      headers: { 'Content-Type': 'image/png', 'Retry-After': '0' }
+    }
+  ]);
+  const dir = mkdtempSync(join(tmpdir(), 'preview-render-early-'));
+  const outputPath = join(dir, 'gmail.png');
+  try {
+    const result = await runCli(
+      [
+        'preview',
+        'render',
+        'preview_test_001',
+        'gmail_chrome',
+        '--output',
+        outputPath,
+        '--json'
+      ],
+      { MAILGUN_API_KEY: 'k' },
+      server.baseUrl
+    );
+    assert.equal(result.code, 0);
+    assert.equal(assetRequests, 2);
+    assert.deepEqual(server.requests.map((request) => request.path), [
+      '/v2/preview/tests/preview_test_001/results/gmail_chrome',
+      '/signed/default.png',
+      '/signed/default.png'
+    ]);
+    assert.equal(result.stdout.includes('token=secret'), false);
+    assert.deepEqual(readFileSync(outputPath), png);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await server.close();
+  }
+});
+
 test('preview result rejects a non-numeric --timeout (exit 2)', async () => {
   const result = await runCli(['preview', 'result', 'preview_test_001', '--timeout', 'soon', '--json'], { MAILGUN_API_KEY: 'k' });
   assert.equal(result.code, 2);

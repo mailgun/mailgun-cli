@@ -41,6 +41,8 @@ lookup; when `--output` is supplied, it downloads one API-provided screenshot
 asset without exposing its signed URL and refuses to overwrite an existing file.
 Callers may select an explicit returned key with `--variant`; otherwise the CLI
 prefers `default`, then another full screenshot, then a thumbnail.
+Screenshot downloads retry only HTTP `425` within one absolute 30-second
+deadline. This read retry never repeats the preview-test create.
 
 ## Current architecture rules
 

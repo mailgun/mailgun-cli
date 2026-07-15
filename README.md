@@ -120,6 +120,9 @@ downloads the `default` screenshot when present, otherwise another available
 full screenshot before falling back to a thumbnail. `--variant` can select an
 explicit key returned by the metadata call. Signed URLs are never printed;
 downloads are limited to 25 MiB and refuse to overwrite an existing file.
+An HTTP `425` from a screenshot asset is retried within the existing 30-second
+download deadline because the asset may still be propagating; no preview test is
+created or retried by this read-only operation.
 
 - HTML is file-only; inline HTML and stdin are not accepted.
 - Omitting `--clients` uses Mailgun's default client set. Use `preview clients`
