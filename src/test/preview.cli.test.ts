@@ -271,6 +271,58 @@ test('preview render downloads one selected client image without printing its si
   }
 });
 
+test('preview render with --output chooses the API default screenshot without guessing keys', async () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+  const server = await startMockServer([
+    {
+      method: 'GET',
+      path: '/v2/preview/tests/preview_test_001/results/gmail_chrome',
+      json: (request: RecordedRequest) => ({
+        ...CLIENT_RESULT,
+        gmail_chrome: {
+          ...CLIENT_RESULT.gmail_chrome,
+          screenshots: {
+            default: `http://${request.headers.host}/signed/default.png?token=secret`,
+            horizontal: `http://${request.headers.host}/signed/horizontal.png?token=secret`
+          }
+        }
+      })
+    },
+    {
+      method: 'GET',
+      path: '/signed/default.png',
+      body: png,
+      headers: { 'Content-Type': 'image/png' }
+    }
+  ]);
+  const dir = mkdtempSync(join(tmpdir(), 'preview-render-default-'));
+  const outputPath = join(dir, 'gmail.png');
+  try {
+    const result = await runCli(
+      [
+        'preview',
+        'render',
+        'preview_test_001',
+        'gmail_chrome',
+        '--output',
+        outputPath,
+        '--json'
+      ],
+      { MAILGUN_API_KEY: 'k' },
+      server.baseUrl
+    );
+    assert.equal(result.code, 0);
+    const json = JSON.parse(result.stdout);
+    assert.equal(json.selected_variant, 'default');
+    assert.equal(json.output_path, outputPath);
+    assert.equal(result.stdout.includes('token=secret'), false);
+    assert.deepEqual(readFileSync(outputPath), png);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await server.close();
+  }
+});
+
 test('preview result rejects a non-numeric --timeout (exit 2)', async () => {
   const result = await runCli(['preview', 'result', 'preview_test_001', '--timeout', 'soon', '--json'], { MAILGUN_API_KEY: 'k' });
   assert.equal(result.code, 2);

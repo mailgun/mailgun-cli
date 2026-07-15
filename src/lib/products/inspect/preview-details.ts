@@ -198,6 +198,14 @@ function renderVariants(record: Record<string, unknown>): RenderVariant[] {
   return variants.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function defaultRenderVariant(variants: RenderVariant[]): RenderVariant | null {
+  return variants.find((variant) => variant.name === 'default')
+    ?? variants.find((variant) => variant.name !== 'full_thumbnail' && variant.name !== 'thumbnail')
+    ?? variants.find((variant) => variant.name === 'full_thumbnail')
+    ?? variants.find((variant) => variant.name === 'thumbnail')
+    ?? null;
+}
+
 const MAX_RENDER_BYTES = 25 * 1024 * 1024;
 
 async function downloadRender(urlValue: string, outputPath: string): Promise<number> {
@@ -259,8 +267,8 @@ export async function getPreviewRender(params: {
   variant?: string;
   outputPath?: string;
 }): Promise<PreviewRenderOutput> {
-  if ((params.variant === undefined) !== (params.outputPath === undefined)) {
-    throw new UsageError('--variant and --output must be provided together');
+  if (params.variant !== undefined && params.outputPath === undefined) {
+    throw new UsageError('--variant requires --output');
   }
   const url = buildMailgunUrl(
     `/v2/preview/tests/${encodeURIComponent(params.testId)}/results/${encodeURIComponent(params.clientId)}`,
@@ -277,13 +285,18 @@ export async function getPreviewRender(params: {
     throw new CliError(`Mailgun returned no render for client ${params.clientId}`);
   }
   const variants = renderVariants(record);
-  const selected = params.variant === undefined
-    ? null
-    : variants.find((variant) => variant.name === params.variant) ?? null;
+  const selected = params.variant !== undefined
+    ? variants.find((variant) => variant.name === params.variant) ?? null
+    : params.outputPath !== undefined
+      ? defaultRenderVariant(variants)
+      : null;
   if (params.variant !== undefined && selected === null) {
     throw new UsageError(
       `render variant '${params.variant}' is unavailable; choose one of: ${variants.map((variant) => variant.name).join(', ') || 'none'}`
     );
+  }
+  if (params.outputPath !== undefined && selected === null) {
+    throw new UsageError(`Mailgun returned no screenshot assets for client ${params.clientId}`);
   }
   const bytes = selected && params.outputPath
     ? await downloadRender(selected.url, params.outputPath)

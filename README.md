@@ -71,7 +71,7 @@ mailgun preview clients --json
 mailgun preview list --limit 10 --json
 mailgun preview result --test-id preview_123 --json
 mailgun preview issues preview_123 --check accessibility
-mailgun preview render preview_123 iphone16gmail_18 --variant portrait --output ./iphone.png
+mailgun preview render preview_123 iphone16gmail_18 --output ./iphone.png
 mailgun preview run --subject "June campaign" --html ./rendered.html --dry-run --json
 mailgun preview run --subject "June campaign" --html ./rendered.html --yes --json
 
@@ -115,9 +115,11 @@ location, target/snippet, and URL where available. It fetches only the selected
 check and omits passing records.
 
 `preview render` retrieves exactly one client result. Without download flags it
-lists metadata and available screenshot variants. Passing both `--variant` and
-`--output` downloads that image without printing its signed URL; downloads are
-limited to 25 MiB and refuse to overwrite an existing file.
+lists metadata and available API-provided screenshot keys. Passing `--output`
+downloads the `default` screenshot when present, otherwise another available
+full screenshot before falling back to a thumbnail. `--variant` can select an
+explicit key returned by the metadata call. Signed URLs are never printed;
+downloads are limited to 25 MiB and refuse to overwrite an existing file.
 
 - HTML is file-only; inline HTML and stdin are not accepted.
 - Omitting `--clients` uses Mailgun's default client set. Use `preview clients`

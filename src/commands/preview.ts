@@ -117,7 +117,8 @@ export const PREVIEW_DESCRIPTORS: CommandDescriptor[] = [
     ],
     examples: [
       'mailgun preview render preview_123 gmail_chrome',
-      'mailgun preview render preview_123 gmail_chrome --variant full --output ./gmail.png'
+      'mailgun preview render preview_123 gmail_chrome --output ./gmail.png',
+      'mailgun preview render preview_123 gmail_chrome --variant default --output ./gmail.png'
     ]
   },
   {
@@ -478,11 +479,11 @@ function registerRender(parent: Command): void {
     .argument('[client_id]', 'preview client ID (alternative to --client-id)')
     .option('--test-id <test_id>', 'email preview test ID')
     .option('--client-id <client_id>', 'preview client ID')
-    .option('--variant <name>', 'render variant to download, such as full, portrait, or thumbnail')
-    .option('--output <path>', 'local path for the downloaded image; refuses to overwrite')
+    .option('--variant <name>', 'API-provided screenshot key to download, such as default')
+    .option('--output <path>', 'local path for the downloaded image; chooses a default asset and refuses to overwrite')
     .addHelpText(
       'after',
-      '\nExamples:\n  mailgun preview render preview_123 gmail_chrome\n  mailgun preview render preview_123 gmail_chrome --variant full --output ./gmail.png\n'
+      '\nExamples:\n  mailgun preview render preview_123 gmail_chrome\n  mailgun preview render preview_123 gmail_chrome --output ./gmail.png\n  mailgun preview render preview_123 gmail_chrome --variant default --output ./gmail.png\n'
     );
 
   addApiOptions(render);

@@ -37,8 +37,10 @@ Commands outside this table are outside the current production surface. New comm
 
 `preview issues` is a read-only drill-down over exactly one requested link,
 image, or accessibility result. `preview render` is a read-only single-client
-lookup; when both `--variant` and `--output` are supplied, it downloads that one
-image without exposing its signed URL and refuses to overwrite an existing file.
+lookup; when `--output` is supplied, it downloads one API-provided screenshot
+asset without exposing its signed URL and refuses to overwrite an existing file.
+Callers may select an explicit returned key with `--variant`; otherwise the CLI
+prefers `default`, then another full screenshot, then a thumbnail.
 
 ## Current architecture rules
 
