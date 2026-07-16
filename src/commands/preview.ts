@@ -39,16 +39,7 @@ import { resolveWriteMode } from '../lib/cli/write-guard.js';
 import { createSpinner } from '../lib/cli/spinner.js';
 import type { CommandDescriptor } from './descriptor.js';
 
-// Mailgun's published V2 schema does not define an HTML maximum. Operators may
-// configure a local preflight ceiling without presenting it as upstream policy.
-function maxHtmlBytes(): number | null {
-  const raw = process.env.MAILGUN_PREVIEW_MAX_HTML_BYTES;
-  if (raw !== undefined && /^\d+$/.test(raw.trim())) {
-    const parsed = Number(raw.trim());
-    if (parsed > 0) return parsed;
-  }
-  return null;
-}
+const MAX_HTML_BYTES = 5 * 1024 * 1024;
 
 interface HtmlSource {
   path: string;
@@ -76,10 +67,9 @@ function readHtmlSource(pathValue: unknown): HtmlSource {
     throw new UsageError(`--html file '${path}' is empty`);
   }
   const bytes = Buffer.byteLength(html, 'utf8');
-  const limit = maxHtmlBytes();
-  if (limit !== null && bytes > limit) {
+  if (bytes > MAX_HTML_BYTES) {
     throw new UsageError(
-      `--html file '${path}' is ${bytes} bytes, over the configured ${limit}-byte MAILGUN_PREVIEW_MAX_HTML_BYTES limit`
+      `--html file '${path}' is ${bytes} UTF-8 bytes, over the ${MAX_HTML_BYTES}-byte (5 MiB) Inspect limit`
     );
   }
   const sha256 = createHash('sha256').update(html, 'utf8').digest('hex');

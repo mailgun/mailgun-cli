@@ -137,8 +137,8 @@ created or retried by this read-only operation.
   `instances` sums the reported occurrences.
 - `--reference-id` is a correlation value only. It is not an idempotency key or
   a guaranteed lookup field.
-- Mailgun's published V2 schema does not state an HTML maximum. Set
-  `MAILGUN_PREVIEW_MAX_HTML_BYTES` only when you want an additional local limit.
+- Preview HTML is limited to 5 MiB. Oversized files are rejected before a
+  preview test is created.
 
 JSON output matches the MCP composite summary: render counts and client IDs,
 per-check lifecycle and references, native severity/support breakdowns,

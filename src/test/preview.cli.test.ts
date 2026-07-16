@@ -680,21 +680,27 @@ test('preview run rejects a missing --html file before any network call (exit 2)
 });
 
 test('preview run rejects an oversized --html file (exit 2)', async () => {
-  const file = withHtmlFile(SAMPLE_HTML);
+  const file = withHtmlFile('x'.repeat(5 * 1024 * 1024 + 1));
   try {
-    const result = await runCli(
-      ['preview', 'run', '--subject', 'June', '--html', file.path, '--dry-run', '--json'],
-      { MAILGUN_PREVIEW_MAX_HTML_BYTES: '10' }
-    );
+    const result = await runCli([
+      'preview',
+      'run',
+      '--subject',
+      'June',
+      '--html',
+      file.path,
+      '--dry-run',
+      '--json'
+    ]);
     assert.equal(result.code, 2);
-    assert.match(result.stderr, /over the configured 10-byte MAILGUN_PREVIEW_MAX_HTML_BYTES limit/);
+    assert.match(result.stderr, /over the 5242880-byte \(5 MiB\) Inspect limit/);
   } finally {
     file.cleanup();
   }
 });
 
-test('preview run has no default HTML cap while Mailgun documents none', async () => {
-  const html = `<html><body>${'x'.repeat(2 * 1024 * 1024)}</body></html>`;
+test('preview run accepts HTML at the 5 MiB limit', async () => {
+  const html = 'x'.repeat(5 * 1024 * 1024);
   const file = withHtmlFile(html);
   try {
     const result = await runCli([
