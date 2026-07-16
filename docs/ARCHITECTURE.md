@@ -43,6 +43,9 @@ Callers may select an explicit returned key with `--variant`; otherwise the CLI
 prefers `default`, then another full screenshot, then a thumbnail.
 Screenshot downloads retry only HTTP `425` within one absolute 30-second
 deadline. This read retry never repeats the preview-test create.
+Inspect product modules own check-detail normalization, render metadata, and
+asset selection. The CLI layer owns local output-path validation, bounded image
+download retries, and filesystem writes.
 
 ## Current architecture rules
 

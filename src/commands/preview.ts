@@ -9,6 +9,7 @@ import {
   parseTimeoutSeconds,
   resolveRequiredArg
 } from '../lib/cli/input.js';
+import { downloadPreviewRender } from '../lib/cli/preview-render-download.js';
 import {
   listPreviewTests,
   listPreviewClients,
@@ -17,19 +18,21 @@ import {
 } from '../lib/products/inspect/preview.js';
 import {
   getPreviewIssues,
-  getPreviewRender,
   type PreviewIssuesOutput,
-  type PreviewRenderOutput
-} from '../lib/products/inspect/preview-details.js';
+  type PreviewIssueCheck
+} from '../lib/products/inspect/preview-issues.js';
 import {
-  CHECK_NAMES,
+  getPreviewRender,
+  type PreviewRenderMetadata
+} from '../lib/products/inspect/preview-render.js';
+import {
   getPreviewQa,
   runPreviewTest,
   PreviewRunError,
-  type CheckName,
   type PreviewCreateInput,
   type PreviewQaOutput
 } from '../lib/products/inspect/preview-qa.js';
+import { CHECK_NAMES, type CheckName } from '../lib/products/inspect/preview-checks.js';
 import { addApiOptions } from './shared-options.js';
 import { chalkFor, CliError, handleCommandError, printError, printJSON, UsageError } from '../lib/cli/output.js';
 import { resolveWriteMode } from '../lib/cli/write-guard.js';
@@ -295,6 +298,11 @@ function printRender(output: PreviewRenderOutput, opts: { json?: boolean; quiet?
   }
 }
 
+interface PreviewRenderOutput extends PreviewRenderMetadata {
+  output_path: string | null;
+  bytes: number | null;
+}
+
 function printClients(output: PreviewClientsOutput, opts: { json?: boolean; quiet?: boolean }): void {
   const chalk = chalkFor(opts);
   if (output.clients.length === 0) {
@@ -459,7 +467,7 @@ function registerIssues(parent: Command): void {
         apiKey: runtime.apiKey!,
         baseUrl: runtime.baseUrl,
         testId,
-        check: check as CheckName
+        check: check as PreviewIssueCheck
       });
       spinner.stop();
       if (runtime.json) printJSON(output);
@@ -509,16 +517,30 @@ function registerRender(parent: Command): void {
         flagName: '--client-id',
         missingMessage: "a client id is required (positional or --client-id; get one from 'mailgun preview clients')"
       });
+      const variant = typeof opts.variant === 'string' ? opts.variant.trim() : undefined;
+      const outputPath = typeof opts.output === 'string' ? opts.output.trim() : undefined;
+      if (variant !== undefined && outputPath === undefined) {
+        throw new UsageError('--variant requires --output');
+      }
       const runtime = resolveRuntime(command, { requireApiKey: true });
       spinner.start('Fetching client render...');
-      const output = await getPreviewRender({
+      const lookup = await getPreviewRender({
         apiKey: runtime.apiKey!,
         baseUrl: runtime.baseUrl,
         testId,
         clientId,
-        variant: typeof opts.variant === 'string' ? opts.variant.trim() : undefined,
-        outputPath: typeof opts.output === 'string' ? opts.output.trim() : undefined
+        variant,
+        selectAsset: outputPath !== undefined
       });
+      let output: PreviewRenderOutput = {
+        ...lookup.metadata,
+        output_path: null,
+        bytes: null
+      };
+      if (outputPath !== undefined && lookup.selectedAssetUrl !== null) {
+        const bytes = await downloadPreviewRender(lookup.selectedAssetUrl, outputPath);
+        output = { ...output, output_path: outputPath, bytes };
+      }
       spinner.stop();
       if (runtime.json) printJSON(output);
       else printRender(output, runtime);

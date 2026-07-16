@@ -137,10 +137,6 @@ created or retried by this read-only operation.
   `instances` sums the reported occurrences.
 - `--reference-id` is a correlation value only. It is not an idempotency key or
   a guaranteed lookup field.
-- Screenshot observations are a separate evidence channel from Inspect's
-  structured findings. A render can support checks for clipping, overlap, image
-  loading, and qualitative legibility, but cannot verify alt text, semantic
-  roles, screen-reader behavior, or exact WCAG contrast ratios.
 - Mailgun's published V2 schema does not state an HTML maximum. Set
   `MAILGUN_PREVIEW_MAX_HTML_BYTES` only when you want an additional local limit.
 

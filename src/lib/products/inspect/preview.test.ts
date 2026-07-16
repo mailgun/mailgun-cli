@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { normalizePreviewList, normalizePreviewClients } from './preview.js';
 import {
   normalizeRenderState,
-  extractCheckResultIds,
   countLinkValidationIssues,
   countImageValidationIssues,
   countAccessibilityIssues,
@@ -11,6 +10,7 @@ import {
   buildPreviewQaOutput,
   type CheckFetch
 } from './preview-qa.js';
+import { extractCheckResultIds } from './preview-checks.js';
 import { PREVIEW_LIST, PREVIEW_LIST_EMPTY } from '../../../fixtures/inspect.js';
 import {
   RENDER_COMPLETE,

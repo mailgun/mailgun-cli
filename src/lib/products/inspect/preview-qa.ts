@@ -1,6 +1,15 @@
 import { performance } from 'node:perf_hooks';
 import type { DataGap } from '../../core/types.js';
 import { buildMailgunUrl, mailgunRequest } from '../../core/mailgun.js';
+import {
+  CHECK_NAMES,
+  checkResultPath,
+  detailStatus,
+  extractCheckResultIds,
+  type CheckName,
+  type CheckReference
+} from './preview-checks.js';
+import { asArray, asRecord, stringArray, stringOrNull } from './preview-values.js';
 
 // Email Preview QA summary, mirroring the MCP composite output field-for-field:
 // the same upstream payloads normalize to the same counts, references, lifecycle
@@ -14,15 +23,6 @@ export type CheckLifecycle =
   | 'complete'
   | 'job_failed'
   | 'unavailable';
-
-export type CheckName = 'link_validation' | 'image_validation' | 'accessibility' | 'code_analysis';
-
-export const CHECK_NAMES: readonly CheckName[] = [
-  'link_validation',
-  'image_validation',
-  'accessibility',
-  'code_analysis'
-];
 
 export interface PreviewWarning {
   name: string | null;
@@ -117,30 +117,6 @@ export class PreviewRunError extends Error {
 
 const PRODUCT = 'Inspect' as const;
 
-// --- value helpers ---
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function stringArray(value: unknown): string[] {
-  return asArray(value).filter((v): v is string => typeof v === 'string');
-}
-
-function str(value: unknown): string | null {
-  return typeof value === 'string' && value.length > 0 ? value : null;
-}
-
-function statusToken(value: unknown): string {
-  return typeof value === 'string' ? value.trim().toLowerCase() : '';
-}
-
 // Preserve native severity/impact spelling and casing. Blank/missing buckets as unknown.
 function severityBucket(value: unknown): string {
   const s = typeof value === 'string' ? value.trim() : '';
@@ -175,56 +151,6 @@ export function normalizeRenderState(render: unknown): RenderState {
   return { status, completed, processing, bounced };
 }
 
-// --- check references ---
-
-export interface CheckReference {
-  requested: boolean;
-  hasErrors: boolean;
-  resultId: string | null;
-}
-
-export function extractCheckResultIds(
-  render: unknown,
-  requestedChecks?: ReadonlySet<CheckName>
-): Record<CheckName, CheckReference> {
-  const cc = asRecord(asRecord(render).content_checking);
-  const result = {} as Record<CheckName, CheckReference>;
-  for (const name of CHECK_NAMES) {
-    const raw = cc[name];
-    if (raw === null) {
-      result[name] = { requested: false, hasErrors: false, resultId: null };
-      continue;
-    }
-    if (raw === undefined) {
-      result[name] = {
-        requested: requestedChecks ? requestedChecks.has(name) : true,
-        hasErrors: false,
-        resultId: null
-      };
-      continue;
-    }
-    const node = asRecord(raw);
-    const hasErrors = asArray(node.errors).length > 0;
-    const items = asRecord(node.items);
-    result[name] = { requested: true, hasErrors, resultId: str(items.id) };
-  }
-  return result;
-}
-
-export function checkResultPath(name: CheckName, resultId: string): string {
-  const id = encodeURIComponent(resultId);
-  switch (name) {
-    case 'link_validation':
-      return `/v1/inspect/links/${id}`;
-    case 'image_validation':
-      return `/v1/inspect/images/${id}`;
-    case 'accessibility':
-      return `/v1/inspect/accessibility/${id}`;
-    case 'code_analysis':
-      return `/v1/inspect/analyze/${id}`;
-  }
-}
-
 // --- check fetch outcome ---
 
 export type CheckFetchStatus = 'ok' | 'not_found' | 'not_fetched';
@@ -232,20 +158,6 @@ export type CheckFetchStatus = 'ok' | 'not_found' | 'not_fetched';
 export interface CheckFetch {
   status: CheckFetchStatus;
   payload?: unknown;
-}
-
-// Completion signal from the detail payload's meta.status (case-insensitive; missing = complete).
-export function detailStatus(payload: unknown): 'complete' | 'processing' {
-  const raw = statusToken(asRecord(asRecord(payload).meta).status);
-  if (
-    raw.startsWith('process') ||
-    raw.startsWith('pending') ||
-    raw.startsWith('queu') ||
-    raw.startsWith('run')
-  ) {
-    return 'processing';
-  }
-  return 'complete';
 }
 
 // A requested check is terminal once its job errored, its detail is complete, or
@@ -372,7 +284,7 @@ export function countCodeAnalysisIssues(payload: unknown): CodeAnalysisCounts {
   let instances = 0;
   for (const feature of features) {
     const record = asRecord(feature);
-    const slug = str(record.slug) ?? str(record.name) ?? 'unknown';
+    const slug = stringOrNull(record.slug) ?? stringOrNull(record.name) ?? 'unknown';
     const instanceCount = asArray(record.instances).length;
     increment(by_feature, slug, instanceCount);
     instances += instanceCount;
@@ -395,7 +307,7 @@ export function countCodeAnalysisIssues(payload: unknown): CodeAnalysisCounts {
 export function normalizeWarnings(create: unknown): PreviewWarning[] {
   return asArray(asRecord(create).warnings).map((w) => {
     const record = asRecord(w);
-    return { name: str(record.name), message: str(record.message) };
+    return { name: stringOrNull(record.name), message: stringOrNull(record.message) };
   });
 }
 
@@ -426,7 +338,7 @@ export function buildPreviewCreateRequest(input: PreviewCreateInput): Record<str
 }
 
 export function extractCreatedTestId(created: unknown): string | null {
-  return str(asRecord(created).id);
+  return stringOrNull(asRecord(created).id);
 }
 
 // --- output builder (pure) ---
