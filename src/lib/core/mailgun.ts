@@ -94,15 +94,15 @@ export async function mailgunRequest<T>(
 
   if (!response.ok) {
     if (response.status === 401) {
-      throw new CliError('Mailgun API returned 401 - check your MAILGUN_API_KEY');
+      throw new CliError('Mailgun API returned 401 - check your MAILGUN_API_KEY', 1, 401);
     }
     const text = await response.text().catch(() => '');
     const safeBody = truncateBody(redact(text, apiKey));
     if (response.status === 403) {
       const apiResponse = safeBody.length > 0 ? safeBody : 'Forbidden';
-      throw new CliError(`Mailgun API returned 403 for ${operation}: ${apiResponse}`);
+      throw new CliError(`Mailgun API returned 403 for ${operation}: ${apiResponse}`, 1, 403);
     }
-    throw new CliError(`Mailgun API returned ${response.status}: ${safeBody}`);
+    throw new CliError(`Mailgun API returned ${response.status}: ${safeBody}`, 1, response.status);
   }
 
   return (await response.json()) as T;
