@@ -8,6 +8,7 @@ import { PREVIEW_LIST, PREVIEW_LIST_EMPTY, PREVIEW_403 } from '../fixtures/inspe
 import {
   CREATE_ALL_CHECKS,
   RENDER_COMPLETE,
+  RENDER_CHECK_LIFECYCLE,
   RENDER_PROCESSING,
   LINK_RESULT,
   IMAGE_RESULT,
@@ -210,6 +211,23 @@ test('preview issues shows failed link URLs in human output', async () => {
     assert.match(result.stdout, /https:\/\/example\.com\/broken/);
     assert.match(result.stdout, /line 20 · column 6/);
     assert.doesNotMatch(result.stdout, /https:\/\/example\.com\/ok/);
+  } finally {
+    await server.close();
+  }
+});
+
+test('preview issues distinguishes failed checks from unavailable results', async () => {
+  const server = await startMockServer([{ method: 'GET', path: STATUS_PATH, json: RENDER_CHECK_LIFECYCLE }]);
+  try {
+    const result = await runCli(
+      ['preview', 'issues', 'preview_test_001', '--check', 'image_validation'],
+      { MAILGUN_API_KEY: 'k' },
+      server.baseUrl
+    );
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /image_validation check failed/);
+    assert.doesNotMatch(result.stderr, /result is not available yet/);
+    assert.deepEqual(server.requests.map((request) => request.path), [STATUS_PATH]);
   } finally {
     await server.close();
   }

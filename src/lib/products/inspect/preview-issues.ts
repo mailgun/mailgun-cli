@@ -1,4 +1,4 @@
-import { UsageError } from '../../cli/output.js';
+import { CliError, UsageError } from '../../cli/output.js';
 import { buildMailgunUrl, mailgunRequest } from '../../core/mailgun.js';
 import type { DataGap } from '../../core/types.js';
 import {
@@ -111,6 +111,11 @@ export async function getPreviewIssues(params: {
   const ref = extractCheckResultIds(render)[params.check];
   if (!ref.requested) {
     throw new UsageError(`the ${params.check} check was not requested for preview test ${params.testId}`);
+  }
+  if (ref.hasErrors) {
+    throw new CliError(
+      `the ${params.check} check failed for preview test ${params.testId}; run 'mailgun preview result ${params.testId}' for check lifecycle details`
+    );
   }
   if (ref.resultId === null) {
     throw new UsageError(
