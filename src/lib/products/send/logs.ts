@@ -210,6 +210,19 @@ export async function fetchRecentEvents(params: EventsFetchParams): Promise<Norm
   return page.events;
 }
 
+// Bounds the tail dedupe set so a long-running poll loop can't grow memory
+// without limit. Keys are evicted oldest-first once this many are retained,
+// which still covers far more than any realistic cross-poll overlap.
+export const MAX_DEDUPE_KEYS = 10_000;
+
+export function rememberKey(dedupe: Set<string>, key: string): void {
+  dedupe.add(key);
+  if (dedupe.size > MAX_DEDUPE_KEYS) {
+    const oldest = dedupe.values().next().value;
+    if (oldest !== undefined) dedupe.delete(oldest);
+  }
+}
+
 export async function tailEvents(
   params: EventsFetchParams & { interval: number },
   onEvent: (event: NormalizedEvent) => void
@@ -233,7 +246,7 @@ export async function tailEvents(
   for (const event of [...backlog.events].reverse()) {
     const key = tailDedupeKey(event);
     if (!dedupe.has(key)) {
-      dedupe.add(key);
+      rememberKey(dedupe, key);
       onEvent(event);
     }
     latestMs = maxEventTimestampMs([event], latestMs);
@@ -263,7 +276,7 @@ export async function tailEvents(
       for (const event of page.events) {
         const key = tailDedupeKey(event);
         if (dedupe.has(key)) continue;
-        dedupe.add(key);
+        rememberKey(dedupe, key);
         onEvent(event);
         latestMs = maxEventTimestampMs([event], latestMs);
       }
