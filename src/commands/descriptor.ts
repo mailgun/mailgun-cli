@@ -4,7 +4,9 @@ import type { ProductLabel } from '../lib/core/types.js';
 // descriptors beside their Commander registration; registry.ts only aggregates.
 export interface CommandDescriptor {
   command: string;
-  mode: 'read';
+  // 'read' commands only issue GETs; 'write' commands mutate remote state and
+  // must go through the write guard (--dry-run/--yes).
+  mode: 'read' | 'write';
   description: string;
   product?: ProductLabel;
   mcpTool?: string;
