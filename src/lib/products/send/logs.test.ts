@@ -4,8 +4,10 @@ import {
   buildLogsRequestBody,
   buildLogsUrl,
   logsPath,
+  MAX_DEDUPE_KEYS,
   normalizeEvent,
   normalizeTimestamp,
+  rememberKey,
   toRfc2822Date
 } from './logs.js';
 
@@ -81,4 +83,15 @@ test('buildLogsRequestBody carries poll window and page token', () => {
 test('toRfc2822Date formats poll cursors for Logs', () => {
   assert.equal(toRfc2822Date(1781892600000), 'Fri, 19 Jun 2026 18:10:00 -0000');
   assert.doesNotMatch(toRfc2822Date(1781892600000), / GMT$/);
+});
+
+test('rememberKey keeps the dedupe set bounded and evicts oldest first', () => {
+  const dedupe = new Set<string>();
+  for (let i = 0; i < MAX_DEDUPE_KEYS + 5; i += 1) rememberKey(dedupe, `k${i}`);
+
+  assert.equal(dedupe.size, MAX_DEDUPE_KEYS);
+  assert.ok(!dedupe.has('k0'), 'oldest key should be evicted');
+  assert.ok(!dedupe.has('k4'), 'the five oldest keys should be evicted');
+  assert.ok(dedupe.has('k5'), 'first surviving key should be retained');
+  assert.ok(dedupe.has(`k${MAX_DEDUPE_KEYS + 4}`), 'newest key should be retained');
 });
