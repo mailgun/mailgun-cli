@@ -1,5 +1,4 @@
 import { existsSync, writeFileSync } from 'node:fs';
-import fetch from 'node-fetch';
 import { CliError, UsageError } from './output.js';
 
 const MAX_RENDER_BYTES = 25 * 1024 * 1024;
@@ -55,8 +54,7 @@ export async function downloadPreviewRender(urlValue: string, outputPath: string
     while (true) {
       response = await fetch(url, { signal: controller.signal });
       if (response.status !== 425) break;
-      const body = response.body as (NodeJS.ReadableStream & { destroy?: () => void }) | null;
-      body?.destroy?.();
+      await response.body?.cancel().catch(() => undefined);
       const delayMs = renderRetryDelayMs(response.headers.get('retry-after'), retryCount);
       retryCount += 1;
       await waitForRenderRetry(delayMs, controller.signal);

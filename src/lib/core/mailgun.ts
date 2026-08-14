@@ -1,4 +1,3 @@
-import fetch from 'node-fetch';
 import { CliError } from '../cli/output.js';
 import { USER_AGENT } from './version.js';
 
@@ -105,5 +104,18 @@ export async function mailgunRequest<T>(
     throw new CliError(`Mailgun API returned ${response.status}: ${safeBody}`, 1, response.status);
   }
 
-  return (await response.json()) as T;
+  let text;
+  try {
+    text = await response.text();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new CliError(`Failed to read Mailgun ${operation} response: ${redact(message, apiKey)}`);
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const snippet = truncateBody(redact(text, apiKey));
+    throw new CliError(`Failed to parse Mailgun ${operation} response: ${snippet}`);
+  }
 }
