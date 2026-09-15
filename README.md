@@ -11,6 +11,11 @@ and operating a Mailgun account, with clean JSON output and a machine-readable
 Most commands are read-only. Write commands are labeled in `agent-context` and
 use the explicit, non-interactive guard described below.
 
+> [!NOTE]
+> This is an early preview. The command surface and output may still change.
+> Feedback and feature requests are welcome in
+> [GitHub issues](https://github.com/mailgun/mailgun-cli/issues).
+
 ## Requirements
 
 - Node.js 20 or newer
