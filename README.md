@@ -1,5 +1,8 @@
 # @mailgun/cli
 
+[![npm version](https://img.shields.io/npm/v/@mailgun/cli.svg)](https://www.npmjs.com/package/@mailgun/cli)
+[![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
+
 An agent-first CLI for working with Mailgun from terminals, scripts, CI systems,
 and coding agents. It provides one consistent command surface for understanding
 and operating a Mailgun account, with clean JSON output and a machine-readable
@@ -8,22 +11,32 @@ and operating a Mailgun account, with clean JSON output and a machine-readable
 Most commands are read-only. Write commands are labeled in `agent-context` and
 use the explicit, non-interactive guard described below.
 
+> [!NOTE]
+> This is an early preview. The command surface and output may still change.
+> Feedback and feature requests are welcome in
+> [GitHub issues](https://github.com/mailgun/mailgun-cli/issues).
+
 ## Requirements
 
 - Node.js 20 or newer
+- A Mailgun account and API key from [API security settings](https://app.mailgun.com/settings/api_security)
 
 ## Install
 
-The CLI is not yet published to npm. Build it from source:
+The CLI is published to npm as [`@mailgun/cli`](https://www.npmjs.com/package/@mailgun/cli).
 
 ```bash
-cd mailgun-cli
-npm install
-npm run build      # compiles to dist/ and marks dist/index.js executable
-npm link           # optional: exposes the `mailgun` binary on your PATH
+npm install -g @mailgun/cli
+mailgun --help
 ```
 
-Without linking, invoke it directly with `./dist/index.js <command>`.
+For a one-off run without a global install:
+
+```bash
+npx -y @mailgun/cli --help
+```
+
+In CI or a project, install it as a dependency and invoke `mailgun` from `node_modules/.bin`, or use `npx @mailgun/cli`.
 
 ## Authentication
 
@@ -187,9 +200,15 @@ claim.
 ## Development
 
 ```bash
+git clone https://github.com/mailgun/mailgun-cli.git
+cd mailgun-cli
+npm install
 npm run build      # type-check and compile to dist/
 npm test           # compile to dist-test/ and run the test suite
+npm link           # optional: expose a local `mailgun` binary on your PATH
 ```
+
+Without linking, invoke a local build with `./dist/index.js <command>`.
 
 Tests use Node's built-in runner: pure unit tests for request builders,
 normalizers, and validation, plus subprocess tests that intercept the API via a
