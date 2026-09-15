@@ -29,7 +29,7 @@
   },
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && chmod +x dist/index.js",
-    "test": "node -e \"require('fs').rmSync('dist-test',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\"",
+    "test": "node -e \"require('fs').rmSync('dist-test',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test $(find dist-test -name '*.test.js')",
     "prepublishOnly": "npm run build",
     "dev": "node --loader ts-node/esm src/index.ts",
     "start": "node dist/index.js"
