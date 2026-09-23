@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { Command } from 'commander';
 import { mergedOpts, resolveRuntime } from '../lib/core/runtime.js';
 import {
@@ -35,46 +33,19 @@ import {
 import { CHECK_NAMES, type CheckName } from '../lib/products/inspect/preview-checks.js';
 import { addApiOptions } from './shared-options.js';
 import { chalkFor, CliError, handleCommandError, printError, printJSON, UsageError } from '../lib/cli/output.js';
+import { readHtmlSource, type HtmlSource } from '../lib/cli/html-source.js';
+import { runFailureCliError, type RunVocabulary } from '../lib/cli/run-failure.js';
 import { resolveWriteMode } from '../lib/cli/write-guard.js';
 import { createSpinner } from '../lib/cli/spinner.js';
 import type { CommandDescriptor } from './descriptor.js';
 
-const MAX_HTML_BYTES = 5 * 1024 * 1024;
-
-interface HtmlSource {
-  path: string;
-  html: string;
-  bytes: number;
-  sha256: string;
-}
-
-// Read the HTML payload from a file (file-only; never stdin, never inline). All
-// failures are usage errors raised before any network call so a bad artifact
-// can never consume preview quota.
-function readHtmlSource(pathValue: unknown): HtmlSource {
-  if (typeof pathValue !== 'string' || pathValue.trim() === '') {
-    throw new UsageError('--html <file> is required and must be a path to an HTML file');
-  }
-  const path = pathValue.trim();
-  let html: string;
-  try {
-    html = readFileSync(path, 'utf8');
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new UsageError(`could not read --html file '${path}': ${reason}`);
-  }
-  if (html.trim() === '') {
-    throw new UsageError(`--html file '${path}' is empty`);
-  }
-  const bytes = Buffer.byteLength(html, 'utf8');
-  if (bytes > MAX_HTML_BYTES) {
-    throw new UsageError(
-      `--html file '${path}' is ${bytes} UTF-8 bytes, over the ${MAX_HTML_BYTES}-byte (5 MiB) Inspect limit`
-    );
-  }
-  const sha256 = createHash('sha256').update(html, 'utf8').digest('hex');
-  return { path, html, bytes, sha256 };
-}
+const PREVIEW_RUN_VOCABULARY: RunVocabulary = {
+  testNoun: 'preview test',
+  idNoun: 'test id',
+  createNoun: 'preview create',
+  resumeCommand: 'mailgun preview result',
+  listCommand: 'mailgun preview list'
+};
 
 export const PREVIEW_DESCRIPTORS: CommandDescriptor[] = [
   {
@@ -578,24 +549,10 @@ function previewRunCliError(error: PreviewRunError): CliError {
   const referenceCorrelationNote = error.referenceId
     ? ` reference_id '${error.referenceId}' is correlation only and cannot confirm whether a test was created.`
     : '';
-
-  if (error.kind === 'poll_failed') {
-    return new CliError(
-      `preview test ${error.testId} was created, but retrieving its status failed - resume with 'mailgun preview result ${error.testId}'. Cause: ${error.detail ?? 'unknown error'}`,
-      1,
-      error.statusCode
-    );
-  }
-
-  const cause = error.detail ? ` Cause: ${error.detail}` : '';
-  const lead =
-    error.kind === 'create_missing_id'
-      ? 'the create response did not include a test id'
-      : 'the preview create did not complete cleanly and a test may have been created';
-  return new CliError(
-    `${lead}, and no second create was attempted. Inspect 'mailgun preview list' manually before deciding whether to create another test.${referenceCorrelationNote}${cause}`,
-    1,
-    error.statusCode
+  return runFailureCliError(
+    PREVIEW_RUN_VOCABULARY,
+    { kind: error.kind, statusCode: error.statusCode, createdId: error.testId, detail: error.detail },
+    referenceCorrelationNote
   );
 }
 
@@ -647,7 +604,7 @@ function registerRun(parent: Command): void {
       //    network call, so a bad artifact can never consume quota.
       const subject = typeof opts.subject === 'string' ? opts.subject.trim() : '';
       if (subject === '') throw new UsageError('--subject is required and must be non-empty');
-      const source = readHtmlSource(opts.html);
+      const source = readHtmlSource(opts.html, 'Inspect');
       const clients = parseClientsList(opts.clients);
       const contentChecks = parseContentChecks(opts.contentChecks, CHECK_NAMES) as CheckName[] | undefined;
       const referenceId =

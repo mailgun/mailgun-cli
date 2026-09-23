@@ -1,6 +1,13 @@
-import { performance } from 'node:perf_hooks';
 import type { DataGap } from '../../core/types.js';
-import { buildMailgunUrl, mailgunRequest } from '../../core/mailgun.js';
+import {
+  createOnce,
+  failureCause,
+  liveDeps,
+  pollUntil,
+  resolveTimeoutSeconds,
+  type PollDeps,
+  type RunFailureKind
+} from '../../core/write-run.js';
 import {
   CHECK_NAMES,
   checkResultPath,
@@ -87,7 +94,7 @@ export interface PreviewQaOutput {
   data_gaps: DataGap[];
 }
 
-export type PreviewRunFailureKind = 'create_uncertain' | 'create_missing_id' | 'poll_failed';
+export type PreviewRunFailureKind = RunFailureKind;
 
 // Structured workflow failure for the command layer to render. Product code
 // records what happened; shell-specific recovery wording remains in commands/.
@@ -559,14 +566,6 @@ export function buildPreviewQaOutput(params: BuildOutputParams): PreviewQaOutput
 
 // --- polling orchestration (I/O injected for deterministic tests) ---
 
-export type RequestFn = (method: string, path: string, body?: unknown) => Promise<unknown>;
-
-export interface PollDeps {
-  request: RequestFn;
-  now: () => number;
-  sleep: (ms: number) => Promise<void>;
-}
-
 export interface PollParams {
   testId: string;
   timeoutMs: number;
@@ -616,63 +615,33 @@ async function fetchCheckResults(
 // Poll until every requested check is terminal or the deadline passes. Completion
 // is driven by checks, not per-client rendering (a slow client never blocks).
 export async function pollPreviewQa(params: PollParams, deps: PollDeps): Promise<PollResult> {
-  const interval = params.intervalMs ?? POLL_INTERVAL_MS;
-  const deadline = deps.now() + params.timeoutMs;
   const statusPath = `/v2/preview/tests/${encodeURIComponent(params.testId)}`;
-
-  let render: unknown = await deps.request('GET', statusPath);
-  let refs = extractCheckResultIds(render, params.requestedChecks);
-  let fetches = await fetchCheckResults(refs, deps);
-  let timedOut = false;
-
-  const allChecksTerminal = (): boolean =>
-    CHECK_NAMES.every((name) => isCheckTerminal(refs[name], fetches[name]));
-
-  while (!allChecksTerminal()) {
-    if (deps.now() + interval > deadline) {
-      timedOut = true;
-      break;
-    }
-    await deps.sleep(interval);
-    render = await deps.request('GET', statusPath);
-    refs = extractCheckResultIds(render, params.requestedChecks);
-    fetches = await fetchCheckResults(refs, deps);
-  }
-
-  return { render, refs, fetches, timedOut };
+  const { state, timedOut } = await pollUntil(
+    {
+      timeoutMs: params.timeoutMs,
+      intervalMs: params.intervalMs ?? POLL_INTERVAL_MS,
+      fetch: async () => {
+        const render = await deps.request('GET', statusPath);
+        const refs = extractCheckResultIds(render, params.requestedChecks);
+        const fetches = await fetchCheckResults(refs, deps);
+        return { render, refs, fetches };
+      },
+      isSettled: ({ refs, fetches }) => CHECK_NAMES.every((name) => isCheckTerminal(refs[name], fetches[name]))
+    },
+    deps
+  );
+  return { ...state, timedOut };
 }
 
 // --- default runner (real timers + mailgunRequest) ---
 
 const DEFAULT_TIMEOUT_SECONDS = 120;
-const MAX_TIMEOUT_SECONDS = 600;
-
-export function resolveTimeoutSeconds(
-  value: number | undefined,
-  defaultSeconds = DEFAULT_TIMEOUT_SECONDS
-): number {
-  if (value === undefined) return defaultSeconds;
-  if (!Number.isInteger(value) || value < 0 || value > MAX_TIMEOUT_SECONDS) {
-    throw new RangeError(`timeout must be an integer between 0 and ${MAX_TIMEOUT_SECONDS} seconds`);
-  }
-  return value;
-}
 
 // Default deadline for `preview run` create+poll; longer than the read default
 // because the render starts empty right after creation.
 const RUN_DEFAULT_TIMEOUT_SECONDS = 300;
 
-function liveDeps(apiKey: string, baseUrl: string): PollDeps {
-  return {
-    request: (method, path, body) =>
-      mailgunRequest<unknown>(buildMailgunUrl(path, undefined, baseUrl), apiKey, 'preview qa', {
-        method: method as 'GET' | 'POST',
-        ...(body !== undefined ? { body } : {})
-      }),
-    now: () => performance.now(),
-    sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-  };
-}
+const REQUEST_LABEL = 'preview qa';
 
 export async function getPreviewQa(params: {
   apiKey: string;
@@ -680,8 +649,8 @@ export async function getPreviewQa(params: {
   testId: string;
   timeoutSeconds?: number;
 }): Promise<PreviewQaOutput> {
-  const deps = liveDeps(params.apiKey, params.baseUrl);
-  const timeoutMs = resolveTimeoutSeconds(params.timeoutSeconds) * 1000;
+  const deps = liveDeps(params.apiKey, params.baseUrl, REQUEST_LABEL);
+  const timeoutMs = resolveTimeoutSeconds(params.timeoutSeconds, DEFAULT_TIMEOUT_SECONDS) * 1000;
   const poll = await pollPreviewQa({ testId: params.testId, timeoutMs }, deps);
   return buildPreviewQaOutput({
     testId: params.testId,
@@ -701,31 +670,15 @@ export async function runPreviewTest(params: {
   create: PreviewCreateInput;
   timeoutSeconds?: number;
 }): Promise<PreviewQaOutput> {
-  const deps = liveDeps(params.apiKey, params.baseUrl);
+  const deps = liveDeps(params.apiKey, params.baseUrl, REQUEST_LABEL);
   const body = buildPreviewCreateRequest(params.create);
 
-  let created: unknown;
-  try {
-    created = await deps.request('POST', '/v2/preview/tests', body);
-  } catch (error) {
-    const status = (error as { statusCode?: number } | null)?.statusCode;
-    if (status === 429 || (typeof status === 'number' && status >= 500)) {
-      throw new PreviewRunError({
-        kind: 'create_uncertain',
-        statusCode: status,
-        referenceId: params.create.referenceId,
-        detail: error instanceof Error ? error.message : String(error)
-      });
-    }
-    // Other definitive HTTP responses preserve the established CLI error contract.
-    if (typeof status === 'number' && status >= 400) throw error;
-    // Ambiguous: the request may have reached Mailgun before failing.
-    throw new PreviewRunError({
-      kind: 'create_uncertain',
-      referenceId: params.create.referenceId,
-      detail: error instanceof Error ? error.message : String(error)
-    });
-  }
+  const created = await createOnce(
+    deps,
+    '/v2/preview/tests',
+    body,
+    (cause) => new PreviewRunError({ kind: 'create_uncertain', referenceId: params.create.referenceId, ...cause })
+  );
 
   const testId = extractCreatedTestId(created);
   if (testId === null) {
@@ -744,12 +697,7 @@ export async function runPreviewTest(params: {
     poll = await pollPreviewQa({ testId, timeoutMs, requestedChecks }, deps);
   } catch (error) {
     // The test WAS created; polling failure must not trigger a re-create.
-    throw new PreviewRunError({
-      kind: 'poll_failed',
-      statusCode: (error as { statusCode?: number } | null)?.statusCode,
-      testId,
-      detail: error instanceof Error ? error.message : String(error)
-    });
+    throw new PreviewRunError({ kind: 'poll_failed', testId, ...failureCause(error) });
   }
 
   return buildPreviewQaOutput({
@@ -763,4 +711,4 @@ export async function runPreviewTest(params: {
   });
 }
 
-export { MAX_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS, RUN_DEFAULT_TIMEOUT_SECONDS };
+export { DEFAULT_TIMEOUT_SECONDS, RUN_DEFAULT_TIMEOUT_SECONDS };
