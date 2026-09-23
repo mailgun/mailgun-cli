@@ -11,6 +11,7 @@ import { isTTY } from './output.js';
 //   - an exit failsafe clears any lingering spinner
 export interface CliSpinner {
   start(text?: string): void;
+  text(text: string): void;
   succeed(text?: string): void;
   fail(text?: string): void;
   stop(): void;
@@ -18,6 +19,7 @@ export interface CliSpinner {
 
 const NOOP_SPINNER: CliSpinner = {
   start: () => {},
+  text: () => {},
   succeed: () => {},
   fail: () => {},
   stop: () => {}
@@ -37,6 +39,9 @@ export function createSpinner(opts: { json?: boolean; quiet?: boolean }): CliSpi
   return {
     start(text) {
       instance = ora({ text, stream: process.stderr }).start();
+    },
+    text(text) {
+      if (instance) instance.text = text;
     },
     succeed(text) {
       instance?.succeed(text);

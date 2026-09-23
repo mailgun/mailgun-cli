@@ -104,3 +104,40 @@ export function parseContentChecks(
   }
   return [...new Set(names)];
 }
+
+// Parse a comma-separated --providers list into a deduped provider-domain array.
+// Returns undefined when omitted (Mailgun then tests all available providers).
+// An explicitly empty value is a usage error - omit the flag instead.
+export function parseProvidersList(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') {
+    throw new UsageError('--providers must be a comma-separated list of provider domains');
+  }
+  const providers = value.split(',').map((s) => s.trim());
+  if (providers.some((provider) => provider.length === 0)) {
+    throw new UsageError(
+      '--providers contained a blank provider domain; omit the flag to use all Mailgun providers'
+    );
+  }
+  if (providers.length === 0) {
+    throw new UsageError('--providers was empty; omit it to use all Mailgun providers');
+  }
+  return [...new Set(providers)];
+}
+
+// Optional non-negative integer for --max-seeds-per-provider. 0 means no limit.
+export function parseMaxSeedsPerProvider(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'string' && !/^\d+$/.test(value.trim())) {
+    throw new UsageError('--max-seeds-per-provider must be a non-negative integer');
+  }
+  const parsed = z
+    .number()
+    .int()
+    .min(0)
+    .safeParse(typeof value === 'string' ? Number(value) : value);
+  if (!parsed.success) {
+    throw new UsageError('--max-seeds-per-provider must be a non-negative integer');
+  }
+  return parsed.data;
+}

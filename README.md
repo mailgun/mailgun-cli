@@ -76,9 +76,13 @@ mailgun metrics summary --domain acme.com --start 2026-06-01T00:00:00Z --end 202
 mailgun validate-email user@example.com --json
 mailgun validate-email --address user@example.com --provider-lookup true --json
 
-# Inbox placement (Optimize): discover result IDs, then fetch a result
+# Inbox placement (Optimize): discover result IDs, fetch a result, or create a test
 mailgun inbox-placement list --limit 10 --json
 mailgun inbox-placement result --result result_123 --json
+mailgun inbox-placement result result_123 --timeout 0 --json
+mailgun inbox-placement run --from news@example.com --subject "June campaign" --html ./email.html --dry-run --json
+mailgun inbox-placement run --from news@example.com --subject "June campaign" --html ./email.html --yes --json
+mailgun inbox-placement run --from news@example.com --subject "June campaign" --html ./email.html --timeout 0 --yes --json
 
 # Email preview (Inspect): discover clients/tests, run QA, or resume a result
 mailgun preview clients --json
@@ -112,53 +116,34 @@ Every write command requires exactly one of:
 Passing both or neither is a usage error (exit `2`). Commands never prompt, so
 the behavior is deterministic in scripts and agent workflows.
 
-`preview run` is currently the only write command. It creates one remote Mailgun
-Inspect preview test and consumes preview quota. V2 does
-not document create idempotency, so the CLI sends at most one create request and
-never recreates automatically after a timeout or uncertain outcome.
+`preview run` and `inbox-placement run` are the current write commands.
+`preview run` creates one remote Mailgun Inspect preview test and consumes
+preview quota. `inbox-placement run` creates one Optimize inbox placement test,
+sends to seed addresses, and consumes placement quota. Neither V2 preview create
+nor inbox placement create documents idempotency, so the CLI sends at most one
+create request per invocation and never recreates automatically after a timeout
+or uncertain outcome.
+
+## Inbox Placement
+
+`inbox-placement run` matches `preview run`: it creates one test, then polls until
+status leaves `processing` or `--timeout` is reached (default 300 seconds).
+`inbox-placement result` resumes an existing result without creating anything and
+polls with a 120-second default, like `preview result`. `--timeout 0` fetches
+once and returns the current state. A human TTY (without `--json`/`--quiet`)
+shows a spinner while creating, then while polling. `--json` keeps stdout clean;
+resume later with the returned `result_id`.
 
 ## Email Preview QA
 
-`preview run` accepts a subject and rendered HTML file, creates one preview test,
-and polls the requested structured checks. `preview result` safely resumes an
-existing test without creating anything.
-
-After the summary, `preview issues` turns a link, image, or accessibility result
-reference into individual failures with native impact, description, source
-location, target/snippet, and URL where available. It fetches only the selected
-check and omits passing records.
-
-`preview render` retrieves exactly one client result. Without download flags it
-lists metadata and available API-provided screenshot keys. Passing `--output`
-downloads the `default` screenshot when present, otherwise another available
-full screenshot before falling back to a thumbnail. `--variant` can select an
-explicit key returned by the metadata call. Signed URLs are never printed;
-downloads are limited to 25 MiB and refuse to overwrite an existing file.
-An HTTP `425` from a screenshot asset is retried within the existing 30-second
-download deadline because the asset may still be propagating; no preview test is
-created or retried by this read-only operation.
-
-- HTML is file-only; inline HTML and stdin are not accepted.
-- Omitting `--clients` uses Mailgun's default client set. Use `preview clients`
-  to discover explicit IDs.
-- The four checks are `link_validation`, `image_validation`, `accessibility`, and
-  `code_analysis`. All run by default; pass a subset or `none` explicitly.
-- Check completion drives polling. Slow client screenshots do not block the
-  result and are reported through client state plus a `render_incomplete` gap.
-- Accessibility headline counts are issue instances; the corresponding
-  `*_rules` fields count distinct rules.
-- Code analysis `count` is Mailgun's `meta.count` feature total, while
-  `instances` sums the reported occurrences.
-- `--reference-id` is a correlation value only. It is not an idempotency key or
-  a guaranteed lookup field.
-- Preview HTML is limited to 5 MiB. Oversized files are rejected before a
-  preview test is created.
-
-JSON output matches the MCP composite summary: render counts and client IDs,
-per-check lifecycle and references, native severity/support breakdowns,
-warnings, and `data_gaps`. It deliberately contains no raw HTML, individual
-issue records, or Mailgun-authored overall pass/fail verdict. Consumers define
-their own gate from the reported evidence.
+`preview run` creates one Inspect test from a subject and HTML file, then polls
+until the requested checks settle or `--timeout` is reached (default 300 seconds).
+`preview result` resumes an existing test without creating anything and polls with
+a 120-second default. `--timeout 0` fetches once and returns the current state.
+HTML is file-only and capped at 5 MiB. Omit `--clients` to use Mailgun defaults;
+`preview clients` lists IDs. `preview issues` explains one check, and
+`preview render` inspects or downloads one client screenshot. JSON is a mechanical
+summary with no pass/fail verdict; resume later with the returned `test_id`.
 
 ## Agent context
 

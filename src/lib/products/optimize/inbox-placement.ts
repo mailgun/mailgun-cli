@@ -1,9 +1,11 @@
+import { performance } from 'node:perf_hooks';
 import type { DataGap } from '../../core/types.js';
 import { buildMailgunUrl, mailgunRequest } from '../../core/mailgun.js';
 
 // Optimize Inbox Placement normalizers, verified against the live v4 API:
 //   - GET /v4/inbox/results        -> { items: [ <result> ], paging, total }
 //   - GET /v4/inbox/results/{id}   -> { result: <result> }
+//   - POST /v4/inbox/tests         -> { result_id, mailing_list?, links }
 // A <result> uses underscored fields (result_id, subject, sender, created_at,
 // status), an `spamassassin` object, and `delivery_stats` as a provider-keyed
 // MAP whose `all` entry is the aggregate. (The OpenAPI examples were empty /
@@ -141,21 +143,6 @@ export interface InboxResultOutput {
   data_gaps: DataGap[];
 }
 
-export async function getInboxPlacementResult(params: {
-  apiKey: string;
-  baseUrl: string;
-  resultId: string;
-  provider?: string;
-}): Promise<InboxResultOutput> {
-  const url = buildMailgunUrl(
-    `/v4/inbox/results/${encodeURIComponent(params.resultId)}`,
-    { provider: params.provider },
-    params.baseUrl
-  );
-  const response = await mailgunRequest<unknown>(url, params.apiKey, 'inbox placement result');
-  return normalizeInboxResult(params.resultId, response);
-}
-
 function counts(stats: Record<string, unknown>): { inbox: number; spam: number; missing: number; pending: number } {
   return {
     inbox: firstNumber(stats.inbox) ?? 0,
@@ -238,3 +225,261 @@ export function normalizeInboxResult(resultId: string, response: unknown): Inbox
     data_gaps: dataGaps
   };
 }
+
+// ---- create + poll (`inbox-placement run`) ----
+
+export type InboxContentSource =
+  | { kind: 'html'; html: string }
+  | { kind: 'template_name'; templateName: string }
+  | { kind: 'account_template_name'; accountTemplateName: string };
+
+export interface InboxCreateInput {
+  from: string;
+  subject: string;
+  content: InboxContentSource;
+  seedList?: string;
+  providers?: readonly string[];
+  sendingIp?: string;
+  sendingIpPoolId?: string;
+  maxSeedsPerProvider?: number;
+}
+
+export type InboxRunFailureKind = 'create_uncertain' | 'create_missing_id' | 'poll_failed';
+
+// Structured workflow failure for the command layer to render. Product code
+// records what happened; shell-specific recovery wording remains in commands/.
+export class InboxRunError extends Error {
+  readonly kind: InboxRunFailureKind;
+  readonly statusCode?: number;
+  readonly resultId?: string;
+  readonly detail?: string;
+
+  constructor(params: {
+    kind: InboxRunFailureKind;
+    statusCode?: number;
+    resultId?: string;
+    detail?: string;
+  }) {
+    super(params.kind);
+    this.name = 'InboxRunError';
+    this.kind = params.kind;
+    this.statusCode = params.statusCode;
+    this.resultId = params.resultId;
+    this.detail = params.detail;
+  }
+}
+
+export interface InboxPollOutput extends InboxResultOutput {
+  timed_out: boolean;
+}
+
+export interface InboxRunOutput extends InboxPollOutput {
+  mailing_list: string | null;
+}
+
+// Body for POST /v4/inbox/tests. Exactly one content source is required by the
+// API (html | template_name | account_template_name). Optional provider/seed
+// controls are omitted when unset so Mailgun applies its defaults.
+export function buildInboxCreateRequest(input: InboxCreateInput): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    from: input.from,
+    subject: input.subject
+  };
+
+  if (input.content.kind === 'html') body.html = input.content.html;
+  else if (input.content.kind === 'template_name') body.template_name = input.content.templateName;
+  else body.account_template_name = input.content.accountTemplateName;
+
+  if (input.seedList) body.seed_list = input.seedList;
+  if (input.providers && input.providers.length > 0) body.provider_filter = [...input.providers];
+  if (input.sendingIp) body.sending_ip = input.sendingIp;
+  if (input.sendingIpPoolId) body.sending_ip_pool_id = input.sendingIpPoolId;
+  if (input.maxSeedsPerProvider !== undefined) body.max_seeds_per_provider = input.maxSeedsPerProvider;
+
+  return body;
+}
+
+export function extractCreatedResultId(created: unknown): string | null {
+  return firstString(asRecord(created).result_id, asRecord(created).id);
+}
+
+export function extractCreatedMailingList(created: unknown): string | null {
+  return firstString(asRecord(created).mailing_list);
+}
+
+const PRODUCT = 'Optimize' as const;
+const POLL_INTERVAL_MS = 5000;
+const RUN_DEFAULT_TIMEOUT_SECONDS = 300;
+const RESULT_DEFAULT_TIMEOUT_SECONDS = 120;
+const MAX_TIMEOUT_SECONDS = 600;
+
+export function resolveInboxTimeoutSeconds(
+  value: number | undefined,
+  defaultSeconds = RUN_DEFAULT_TIMEOUT_SECONDS
+): number {
+  if (value === undefined) return defaultSeconds;
+  if (!Number.isInteger(value) || value < 0 || value > MAX_TIMEOUT_SECONDS) {
+    throw new RangeError(`timeout must be an integer between 0 and ${MAX_TIMEOUT_SECONDS} seconds`);
+  }
+  return value;
+}
+
+function isTerminalInboxStatus(status: string | null): boolean {
+  if (status === null) return false;
+  return status.toLowerCase() !== 'processing';
+}
+
+export type InboxRequestFn = (method: string, path: string, body?: unknown) => Promise<unknown>;
+
+export interface InboxPollDeps {
+  request: InboxRequestFn;
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+}
+
+export interface InboxPollResult {
+  response: unknown;
+  timedOut: boolean;
+}
+
+// Poll GET /v4/inbox/results/{id} until status leaves "processing" or the
+// deadline passes. timeoutMs=0 means fetch once and return.
+export async function pollInboxPlacementResult(
+  params: { resultId: string; timeoutMs: number; intervalMs?: number; provider?: string },
+  deps: InboxPollDeps
+): Promise<InboxPollResult> {
+  const encodedId = encodeURIComponent(params.resultId);
+  const path = params.provider
+    ? `/v4/inbox/results/${encodedId}?provider=${encodeURIComponent(params.provider)}`
+    : `/v4/inbox/results/${encodedId}`;
+  const interval = params.intervalMs ?? POLL_INTERVAL_MS;
+  const deadline = deps.now() + params.timeoutMs;
+
+  let response: unknown = await deps.request('GET', path);
+  let normalized = normalizeInboxResult(params.resultId, response);
+  let timedOut = false;
+
+  while (!isTerminalInboxStatus(normalized.status)) {
+    if (params.timeoutMs === 0 || deps.now() + interval > deadline) {
+      timedOut = !isTerminalInboxStatus(normalized.status);
+      break;
+    }
+    await deps.sleep(interval);
+    response = await deps.request('GET', path);
+    normalized = normalizeInboxResult(params.resultId, response);
+  }
+
+  return { response, timedOut };
+}
+
+function buildInboxPollOutput(resultId: string, response: unknown, timedOut: boolean): InboxPollOutput {
+  const result = normalizeInboxResult(resultId, response);
+  const dataGaps = [...result.data_gaps];
+  if (timedOut) {
+    dataGaps.push({
+      code: 'workflow_timed_out',
+      product: PRODUCT,
+      message: 'The workflow deadline was reached while the placement test was still processing.',
+      impact: 'Placement counts may be incomplete; resume with the same result id.'
+    });
+  }
+  return {
+    ...result,
+    timed_out: timedOut,
+    data_gaps: dataGaps
+  };
+}
+
+function liveDeps(apiKey: string, baseUrl: string): InboxPollDeps {
+  return {
+    request: (method, path, body) =>
+      mailgunRequest<unknown>(buildMailgunUrl(path, undefined, baseUrl), apiKey, 'inbox placement', {
+        method: method as 'GET' | 'POST',
+        ...(body !== undefined ? { body } : {})
+      }),
+    now: () => performance.now(),
+    sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+  };
+}
+
+export async function getInboxPlacementResult(params: {
+  apiKey: string;
+  baseUrl: string;
+  resultId: string;
+  provider?: string;
+  timeoutSeconds?: number;
+  deps?: InboxPollDeps;
+}): Promise<InboxPollOutput> {
+  const deps = params.deps ?? liveDeps(params.apiKey, params.baseUrl);
+  const timeoutMs = resolveInboxTimeoutSeconds(params.timeoutSeconds, RESULT_DEFAULT_TIMEOUT_SECONDS) * 1000;
+  const poll = await pollInboxPlacementResult(
+    { resultId: params.resultId, timeoutMs, provider: params.provider },
+    deps
+  );
+  return buildInboxPollOutput(params.resultId, poll.response, poll.timedOut);
+}
+
+// Create ONE inbox placement test, then poll and summarize. The create is issued
+// once and never retried (the API is not documented as idempotent). Failures
+// carry structured recovery context for the command layer.
+export async function runInboxPlacementTest(params: {
+  apiKey: string;
+  baseUrl: string;
+  create: InboxCreateInput;
+  timeoutSeconds?: number;
+  deps?: InboxPollDeps;
+  onCreated?: (resultId: string) => void;
+}): Promise<InboxRunOutput> {
+  const deps = params.deps ?? liveDeps(params.apiKey, params.baseUrl);
+  const body = buildInboxCreateRequest(params.create);
+
+  let created: unknown;
+  try {
+    created = await deps.request('POST', '/v4/inbox/tests', body);
+  } catch (error) {
+    const status = (error as { statusCode?: number } | null)?.statusCode;
+    if (status === 429 || (typeof status === 'number' && status >= 500)) {
+      throw new InboxRunError({
+        kind: 'create_uncertain',
+        statusCode: status,
+        detail: error instanceof Error ? error.message : String(error)
+      });
+    }
+    if (typeof status === 'number' && status >= 400) throw error;
+    throw new InboxRunError({
+      kind: 'create_uncertain',
+      detail: error instanceof Error ? error.message : String(error)
+    });
+  }
+
+  const resultId = extractCreatedResultId(created);
+  if (resultId === null) {
+    throw new InboxRunError({ kind: 'create_missing_id' });
+  }
+  const mailingList = extractCreatedMailingList(created);
+  params.onCreated?.(resultId);
+  const timeoutMs = resolveInboxTimeoutSeconds(params.timeoutSeconds) * 1000;
+
+  let poll: InboxPollResult;
+  try {
+    poll = await pollInboxPlacementResult({ resultId, timeoutMs }, deps);
+  } catch (error) {
+    throw new InboxRunError({
+      kind: 'poll_failed',
+      statusCode: (error as { statusCode?: number } | null)?.statusCode,
+      resultId,
+      detail: error instanceof Error ? error.message : String(error)
+    });
+  }
+
+  return {
+    ...buildInboxPollOutput(resultId, poll.response, poll.timedOut),
+    mailing_list: mailingList
+  };
+}
+
+export {
+  RUN_DEFAULT_TIMEOUT_SECONDS,
+  RESULT_DEFAULT_TIMEOUT_SECONDS,
+  MAX_TIMEOUT_SECONDS as INBOX_MAX_TIMEOUT_SECONDS
+};

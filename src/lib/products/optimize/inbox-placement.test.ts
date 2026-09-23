@@ -1,7 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeInboxList, normalizeInboxResult } from './inbox-placement.js';
 import {
+  buildInboxCreateRequest,
+  extractCreatedMailingList,
+  extractCreatedResultId,
+  normalizeInboxList,
+  normalizeInboxResult,
+  pollInboxPlacementResult,
+  runInboxPlacementTest,
+  InboxRunError
+} from './inbox-placement.js';
+import {
+  INBOX_CREATE_RESPONSE,
   INBOX_LIST,
   INBOX_LIST_EMPTY,
   INBOX_RESULT_COMPLETE,
@@ -47,4 +57,139 @@ test('processing result exits with placement_pending gap and no providers', () =
   assert.deepEqual(out.providers, []);
   assert.equal(out.placement.inbox_rate, null);
   assert.equal(out.data_gaps[0]!.code, 'placement_pending');
+});
+
+test('buildInboxCreateRequest emits html content and optional provider filter', () => {
+  const body = buildInboxCreateRequest({
+    from: 'news@example.com',
+    subject: 'June campaign',
+    content: { kind: 'html', html: '<p>hi</p>' },
+    providers: ['gmail.com', 'yahoo.com'],
+    seedList: 'seedlist_1',
+    maxSeedsPerProvider: 5
+  });
+  assert.deepEqual(body, {
+    from: 'news@example.com',
+    subject: 'June campaign',
+    html: '<p>hi</p>',
+    provider_filter: ['gmail.com', 'yahoo.com'],
+    seed_list: 'seedlist_1',
+    max_seeds_per_provider: 5
+  });
+});
+
+test('buildInboxCreateRequest supports template_name content', () => {
+  const body = buildInboxCreateRequest({
+    from: 'news@example.com',
+    subject: 'June campaign',
+    content: { kind: 'template_name', templateName: 'welcome' }
+  });
+  assert.deepEqual(body, {
+    from: 'news@example.com',
+    subject: 'June campaign',
+    template_name: 'welcome'
+  });
+});
+
+test('extractCreatedResultId reads result_id from create response', () => {
+  assert.equal(extractCreatedResultId(INBOX_CREATE_RESPONSE), 'result_123');
+  assert.equal(extractCreatedMailingList(INBOX_CREATE_RESPONSE), 'ibp-seed@example.com');
+  assert.equal(extractCreatedResultId({}), null);
+});
+
+test('pollInboxPlacementResult stops when status leaves processing', async () => {
+  const calls: string[] = [];
+  const poll = await pollInboxPlacementResult(
+    { resultId: 'result_123', timeoutMs: 30_000, intervalMs: 1 },
+    {
+      request: async (_method, path) => {
+        calls.push(path);
+        return calls.length === 1 ? INBOX_RESULT_PROCESSING : INBOX_RESULT_COMPLETE;
+      },
+      now: (() => {
+        let t = 0;
+        return () => {
+          t += 1;
+          return t;
+        };
+      })(),
+      sleep: async () => undefined
+    }
+  );
+  assert.equal(poll.timedOut, false);
+  assert.equal(calls.length, 2);
+  assert.equal(normalizeInboxResult('result_123', poll.response).status, 'complete');
+});
+
+test('runInboxPlacementTest creates once then returns a complete summary', async () => {
+  const methods: string[] = [];
+  let createdId: string | undefined;
+  const output = await runInboxPlacementTest({
+    apiKey: 'k',
+    baseUrl: 'http://example.test',
+    create: {
+      from: 'news@example.com',
+      subject: 'June campaign',
+      content: { kind: 'html', html: '<p>hi</p>' }
+    },
+    timeoutSeconds: 30,
+    onCreated: (resultId) => {
+      createdId = resultId;
+    },
+    deps: {
+      request: async (method, path, body) => {
+        methods.push(`${method} ${path}`);
+        if (method === 'POST') {
+          assert.equal(path, '/v4/inbox/tests');
+          assert.equal((body as { subject: string }).subject, 'June campaign');
+          return INBOX_CREATE_RESPONSE;
+        }
+        return INBOX_RESULT_COMPLETE;
+      },
+      now: () => 0,
+      sleep: async () => undefined
+    }
+  });
+  assert.deepEqual(methods, ['POST /v4/inbox/tests', 'GET /v4/inbox/results/result_123']);
+  assert.equal(createdId, 'result_123');
+  assert.equal(output.result_id, 'result_123');
+  assert.equal(output.timed_out, false);
+  assert.equal(output.mailing_list, 'ibp-seed@example.com');
+  assert.equal(output.placement.inbox_rate, 0.857);
+});
+
+test('runInboxPlacementTest treats create 5xx as create_uncertain and never retries', async () => {
+  let posts = 0;
+  await assert.rejects(
+    () =>
+      runInboxPlacementTest({
+        apiKey: 'k',
+        baseUrl: 'http://example.test',
+        create: {
+          from: 'news@example.com',
+          subject: 'June campaign',
+          content: { kind: 'html', html: '<p>hi</p>' }
+        },
+        deps: {
+          request: async (method) => {
+            if (method === 'POST') {
+              posts += 1;
+              const err = new Error('upstream 500') as Error & { statusCode: number };
+              err.statusCode = 500;
+              throw err;
+            }
+            throw new Error('unexpected GET');
+          },
+          now: () => 0,
+          sleep: async () => undefined
+        }
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof InboxRunError);
+      assert.equal(error.kind, 'create_uncertain');
+      assert.equal(error.statusCode, 500);
+      return true;
+    }
+  );
+  assert.equal(posts, 1);
 });

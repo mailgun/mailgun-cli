@@ -692,7 +692,7 @@ export async function getPreviewQa(params: {
   });
 }
 
-// Create ONE preview test, then poll and summarize - the CLI's only write. The
+// Create ONE preview test, then poll and summarize - an Inspect write. The
 // create is issued once and never retried (V2 is not idempotent). Failures carry
 // structured recovery context for the command layer to present.
 export async function runPreviewTest(params: {
