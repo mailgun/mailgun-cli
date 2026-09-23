@@ -76,9 +76,11 @@ mailgun metrics summary --domain acme.com --start 2026-06-01T00:00:00Z --end 202
 mailgun validate-email user@example.com --json
 mailgun validate-email --address user@example.com --provider-lookup true --json
 
-# Inbox placement (Optimize): discover result IDs, then fetch a result
+# Inbox placement (Optimize): discover result IDs, fetch a result, or create a test
 mailgun inbox-placement list --limit 10 --json
 mailgun inbox-placement result --result result_123 --json
+mailgun inbox-placement run --from news@example.com --subject "June campaign" --html ./email.html --dry-run --json
+mailgun inbox-placement run --from news@example.com --subject "June campaign" --html ./email.html --yes --json
 
 # Email preview (Inspect): discover clients/tests, run QA, or resume a result
 mailgun preview clients --json
@@ -112,10 +114,13 @@ Every write command requires exactly one of:
 Passing both or neither is a usage error (exit `2`). Commands never prompt, so
 the behavior is deterministic in scripts and agent workflows.
 
-`preview run` is currently the only write command. It creates one remote Mailgun
-Inspect preview test and consumes preview quota. V2 does
-not document create idempotency, so the CLI sends at most one create request and
-never recreates automatically after a timeout or uncertain outcome.
+`preview run` and `inbox-placement run` are the current write commands.
+`preview run` creates one remote Mailgun Inspect preview test and consumes
+preview quota. `inbox-placement run` creates one Optimize inbox placement test,
+sends to seed addresses, and consumes placement quota. Neither V2 preview create
+nor inbox placement create documents idempotency, so the CLI sends at most one
+create request per invocation and never recreates automatically after a timeout
+or uncertain outcome.
 
 ## Email Preview QA
 

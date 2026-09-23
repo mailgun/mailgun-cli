@@ -24,6 +24,7 @@ Design intent:
 | `validate-email`         | Validate | `validate_email`                 | `GET /v4/address/validate`        |
 | `inbox-placement list`   | Optimize | CLI discovery helper             | `GET /v4/inbox/results`           |
 | `inbox-placement result` | Optimize | `get_inbox_placement_result`     | `GET /v4/inbox/results/{id}`      |
+| `inbox-placement run`    | Optimize | CLI write workflow               | `POST /v4/inbox/tests` + reads    |
 | `preview list`           | Inspect  | CLI discovery helper             | `GET /v2/preview/tests`           |
 | `preview clients`        | Inspect  | `list_preview_clients`           | `GET /v1/preview/tests/clients`   |
 | `preview result`         | Inspect  | `get_email_preview_qa`           | Preview status + check details    |
@@ -55,9 +56,10 @@ Commander.js is the current parser/router. The architecture lives in the command
 
 ### Read/write posture
 
-Most production commands are read-only. `preview run` is a write because it
-creates a remote quota-consuming Inspect test. Every write command must use the
-shared non-interactive guard: exactly one of `--dry-run` or `--yes` is required.
+Most production commands are read-only. `preview run` and `inbox-placement run`
+are writes because they create remote quota-consuming tests (`inbox-placement run`
+also sends to seed addresses). Every write command must use the shared
+non-interactive guard: exactly one of `--dry-run` or `--yes` is required.
 Dry runs need no credentials and make no requests; execution never prompts.
 
 ### Authentication and runtime inputs
@@ -173,6 +175,19 @@ Important invariants:
 - Normalizes aggregate placement and provider placement.
 - Supports the `--provider` API query filter.
 
+### `mailgun inbox-placement run`
+
+- Write workflow for Optimize inbox placement create + poll.
+- Uses `POST /v4/inbox/tests`, then polls `GET /v4/inbox/results/{result_id}`.
+- Requires exactly one of `--dry-run` or `--yes`; never prompts.
+- Requires `--from`, `--subject`, and exactly one content source among `--html`,
+  `--template-name`, and `--account-template-name`.
+- HTML is file-only; dry-run summaries never echo HTML content.
+- Sends at most one create POST and never recreates after timeout or uncertain
+  create outcomes.
+- Optional `--providers`, `--seed-list`, `--sending-ip`, `--sending-ip-pool-id`,
+  and `--max-seeds-per-provider` map to the documented create fields.
+
 ### `mailgun preview result`
 
 - CLI equivalent of MCP `get_email_preview_qa`.
@@ -186,7 +201,7 @@ Important invariants:
 
 ### `mailgun preview run`
 
-- CLI equivalent of MCP `run_email_preview_qa` and the only current write command.
+- CLI equivalent of MCP `run_email_preview_qa` and one of the current write commands.
 - Accepts rendered HTML from a file and sends at most one create POST.
 - Requires exactly one of `--dry-run` or `--yes`; never prompts.
 - Defaults to all four checks and Mailgun's default clients.
@@ -216,7 +231,6 @@ Documented for planning. Move an item into the current command surface when the 
 | Send      | `send/suppressions.ts`                 | investigate workflow                   | `GET /v3/{domain}/bounces|unsubscribes|complaints/{address}` |
 | Send      | `send/metrics.ts` (extend)             | `metrics compare`, multi-domain        | `POST /v1/analytics/metrics`                                 |
 | Optimize  | `optimize/monitoring.ts`               | `blocklist status`, reputation signals | `/v1/monitoring/*`, `/v1/maverick-score/*`                   |
-| Optimize  | `optimize/inbox-placement.ts` (extend) | `inbox-placement run`                  | `POST /v4/inbox/tests`                                       |
 | Inspect   | `inspect/content-checks.ts`            | `spam-risk report`                     | `/v1/inspect/links|images|accessibility|analyze/*`           |
 | Inspect   | `inspect/preview.ts` (extend)          | `preview download`                     | exports                                                       |
 | Validate  | `validate/bulk.ts`                     | future bulk validation                 | `/v4/address/validate/bulk/*`                                |

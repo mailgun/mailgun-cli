@@ -2,6 +2,7 @@
 //   - list:   { items: [ <result> ], paging, total }  (result fields underscored)
 //   - detail: { result: <result> }  with delivery_stats as a provider-keyed map
 //     whose `all` entry is the aggregate. Fixed June 2026 timestamps.
+//   - create: { result_id, mailing_list?, links.results }
 
 export const INBOX_LIST = {
   items: [
@@ -70,6 +71,15 @@ export const INBOX_RESULT_PROCESSING = {
     sender: 'Marketing <news@example.com>',
     spamassassin: null,
     delivery_stats: {}
+  }
+};
+
+// Create response for POST /v4/inbox/tests (202 Accepted shape).
+export const INBOX_CREATE_RESPONSE = {
+  result_id: 'result_123',
+  mailing_list: 'ibp-seed@example.com',
+  links: {
+    results: 'https://api.mailgun.net/v4/inbox/results/result_123'
   }
 };
 

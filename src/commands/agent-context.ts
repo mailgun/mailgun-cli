@@ -25,8 +25,8 @@ export function buildAgentContext(): Record<string, unknown> {
   }
 
   return {
-    // 1.1 adds the write-command mode ('write') and the preview run descriptor.
-    schema_version: '1.1',
+    // 1.2 adds inbox-placement run beside the existing write-command mode.
+    schema_version: '1.2',
     cli_version: CLI_VERSION,
     name: CLI_NAME,
     description: 'Agent-first Mailgun CLI - curated workflows for diagnostics and observability',
