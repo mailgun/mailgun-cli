@@ -63,7 +63,7 @@ test('buildInboxCreateRequest emits html content and optional provider filter', 
   const body = buildInboxCreateRequest({
     from: 'news@example.com',
     subject: 'June campaign',
-    content: { kind: 'html', html: '<p>hi</p>' },
+    content: { kind: 'html', value: '<p>hi</p>' },
     providers: ['gmail.com', 'yahoo.com'],
     seedList: 'seedlist_1',
     maxSeedsPerProvider: 5
@@ -82,7 +82,7 @@ test('buildInboxCreateRequest supports template_name content', () => {
   const body = buildInboxCreateRequest({
     from: 'news@example.com',
     subject: 'June campaign',
-    content: { kind: 'template_name', templateName: 'welcome' }
+    content: { kind: 'template_name', value: 'welcome' }
   });
   assert.deepEqual(body, {
     from: 'news@example.com',
@@ -130,7 +130,7 @@ test('runInboxPlacementTest creates once then returns a complete summary', async
     create: {
       from: 'news@example.com',
       subject: 'June campaign',
-      content: { kind: 'html', html: '<p>hi</p>' }
+      content: { kind: 'html', value: '<p>hi</p>' }
     },
     timeoutSeconds: 30,
     onCreated: (resultId) => {
@@ -168,7 +168,7 @@ test('runInboxPlacementTest treats create 5xx as create_uncertain and never retr
         create: {
           from: 'news@example.com',
           subject: 'June campaign',
-          content: { kind: 'html', html: '<p>hi</p>' }
+          content: { kind: 'html', value: '<p>hi</p>' }
         },
         deps: {
           request: async (method) => {

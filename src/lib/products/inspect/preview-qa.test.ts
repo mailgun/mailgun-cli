@@ -1,11 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  pollPreviewQa,
-  buildPreviewQaOutput,
-  resolveTimeoutSeconds,
-  type PollDeps
-} from './preview-qa.js';
+import { pollPreviewQa, buildPreviewQaOutput } from './preview-qa.js';
+import type { PollDeps } from '../../core/write-run.js';
 import { CliError } from '../../cli/output.js';
 import {
   RENDER_COMPLETE,
@@ -177,12 +173,4 @@ test('a non-404 detail failure remains a runtime error', async () => {
     pollPreviewQa({ testId: 'preview_test_001', timeoutMs: 30_000 }, deps),
     /Mailgun API returned 500/
   );
-});
-
-test('the product boundary rejects invalid timeouts instead of clamping them', () => {
-  assert.equal(resolveTimeoutSeconds(undefined), 120);
-  assert.equal(resolveTimeoutSeconds(600), 600);
-  for (const invalid of [-1, 600.1, 601, Number.NaN]) {
-    assert.throws(() => resolveTimeoutSeconds(invalid), /integer between 0 and 600/);
-  }
 });

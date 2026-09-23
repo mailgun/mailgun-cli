@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { Command } from 'commander';
 import { mergedOpts, resolveRuntime } from '../lib/core/runtime.js';
 import {
@@ -15,6 +13,7 @@ import {
   runInboxPlacementTest,
   InboxRunError,
   type InboxCreateInput,
+  type InboxContentKind,
   type InboxContentSource,
   type InboxListOutput,
   type InboxPollOutput,
@@ -22,46 +21,30 @@ import {
 } from '../lib/products/optimize/inbox-placement.js';
 import { addApiOptions } from './shared-options.js';
 import { CliError, handleCommandError, printError, printJSON, UsageError, chalkFor } from '../lib/cli/output.js';
+import { readHtmlSource } from '../lib/cli/html-source.js';
+import { runFailureCliError, type RunVocabulary } from '../lib/cli/run-failure.js';
 import { resolveWriteMode } from '../lib/cli/write-guard.js';
 import { createSpinner } from '../lib/cli/spinner.js';
 import type { CommandDescriptor } from './descriptor.js';
 
-const MAX_HTML_BYTES = 5 * 1024 * 1024;
+const INBOX_RUN_VOCABULARY: RunVocabulary = {
+  testNoun: 'inbox placement test',
+  idNoun: 'result id',
+  createNoun: 'inbox placement create',
+  resumeCommand: 'mailgun inbox-placement result',
+  listCommand: 'mailgun inbox-placement list'
+};
 
-interface HtmlSource {
-  path: string;
-  html: string;
-  bytes: number;
-  sha256: string;
-}
+const CONTENT_OPTIONS: ReadonlyArray<{ kind: InboxContentKind; option: string; flag: string; label: string }> = [
+  { kind: 'html', option: 'html', flag: '--html', label: 'html path' },
+  { kind: 'template_name', option: 'templateName', flag: '--template-name', label: 'template' },
+  { kind: 'account_template_name', option: 'accountTemplateName', flag: '--account-template-name', label: 'account tmpl' }
+];
 
-// Read the HTML payload from a file (file-only; never stdin, never inline). All
-// failures are usage errors raised before any network call so a bad artifact
-// can never create a placement test.
-function readHtmlSource(pathValue: unknown): HtmlSource {
-  if (typeof pathValue !== 'string' || pathValue.trim() === '') {
-    throw new UsageError('--html <file> is required and must be a path to an HTML file');
-  }
-  const path = pathValue.trim();
-  let html: string;
-  try {
-    html = readFileSync(path, 'utf8');
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new UsageError(`could not read --html file '${path}': ${reason}`);
-  }
-  if (html.trim() === '') {
-    throw new UsageError(`--html file '${path}' is empty`);
-  }
-  const bytes = Buffer.byteLength(html, 'utf8');
-  if (bytes > MAX_HTML_BYTES) {
-    throw new UsageError(
-      `--html file '${path}' is ${bytes} UTF-8 bytes, over the ${MAX_HTML_BYTES}-byte (5 MiB) CLI limit`
-    );
-  }
-  const sha256 = createHash('sha256').update(html, 'utf8').digest('hex');
-  return { path, html, bytes, sha256 };
-}
+type DryRunContent =
+  | { type: 'html'; path: string; bytes: number; sha256: string }
+  | { type: 'template_name'; template_name: string }
+  | { type: 'account_template_name'; account_template_name: string };
 
 function optionalTrimmedString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -71,36 +54,31 @@ function optionalTrimmedString(value: unknown): string | undefined {
 
 function resolveContentSource(opts: Record<string, unknown>): {
   content: InboxContentSource;
-  htmlSource?: HtmlSource;
+  summary: DryRunContent;
 } {
-  const htmlPath = typeof opts.html === 'string' ? opts.html.trim() : '';
-  const templateName = optionalTrimmedString(opts.templateName);
-  const accountTemplateName = optionalTrimmedString(opts.accountTemplateName);
-  const selected = [
-    htmlPath !== '' ? 'html' : null,
-    templateName ? 'template_name' : null,
-    accountTemplateName ? 'account_template_name' : null
-  ].filter(Boolean);
+  const selected = CONTENT_OPTIONS.flatMap((choice) => {
+    const value = optionalTrimmedString(opts[choice.option]);
+    return value ? [{ kind: choice.kind, value }] : [];
+  });
+  const flags = CONTENT_OPTIONS.map((choice) => choice.flag);
+  const flagList = `${flags.slice(0, -1).join(', ')},`;
 
   if (selected.length === 0) {
-    throw new UsageError(
-      'exactly one content source is required: --html, --template-name, or --account-template-name'
-    );
+    throw new UsageError(`exactly one content source is required: ${flagList} or ${flags.at(-1)}`);
   }
   if (selected.length > 1) {
-    throw new UsageError(
-      'pass exactly one content source among --html, --template-name, and --account-template-name'
-    );
+    throw new UsageError(`pass exactly one content source among ${flagList} and ${flags.at(-1)}`);
   }
 
-  if (htmlPath !== '') {
-    const htmlSource = readHtmlSource(htmlPath);
-    return { content: { kind: 'html', html: htmlSource.html }, htmlSource };
+  const { kind, value } = selected[0]!;
+  if (kind === 'html') {
+    const source = readHtmlSource(value, 'CLI');
+    return {
+      content: { kind, value: source.html },
+      summary: { type: kind, path: source.path, bytes: source.bytes, sha256: source.sha256 }
+    };
   }
-  if (templateName) {
-    return { content: { kind: 'template_name', templateName } };
-  }
-  return { content: { kind: 'account_template_name', accountTemplateName: accountTemplateName! } };
+  return { content: { kind, value }, summary: { type: kind, [kind]: value } as DryRunContent };
 }
 
 export const INBOX_PLACEMENT_DESCRIPTORS: CommandDescriptor[] = [
@@ -319,10 +297,7 @@ interface DryRunSummary {
   will_send_to_seeds: true;
   from: string;
   subject: string;
-  content:
-    | { type: 'html'; path: string; bytes: number; sha256: string }
-    | { type: 'template_name'; template_name: string }
-    | { type: 'account_template_name'; account_template_name: string };
+  content: DryRunContent;
   timeout_seconds: number;
   seed_list?: string;
   providers?: string[];
@@ -334,27 +309,9 @@ interface DryRunSummary {
 
 function buildDryRunSummary(
   create: InboxCreateInput,
-  htmlSource: HtmlSource | undefined,
+  content: DryRunContent,
   timeoutSeconds: number
 ): DryRunSummary {
-  let content: DryRunSummary['content'];
-  if (create.content.kind === 'html') {
-    if (!htmlSource) throw new UsageError('internal error: html source metadata missing for dry-run');
-    content = {
-      type: 'html',
-      path: htmlSource.path,
-      bytes: htmlSource.bytes,
-      sha256: htmlSource.sha256
-    };
-  } else if (create.content.kind === 'template_name') {
-    content = { type: 'template_name', template_name: create.content.templateName };
-  } else {
-    content = {
-      type: 'account_template_name',
-      account_template_name: create.content.accountTemplateName
-    };
-  }
-
   const summary: DryRunSummary = {
     dry_run: true,
     action: 'run_inbox_placement_test',
@@ -382,14 +339,14 @@ function printDryRun(summary: DryRunSummary, opts: { json?: boolean; quiet?: boo
   );
   process.stdout.write(`  from            ${summary.from}\n`);
   process.stdout.write(`  subject         ${summary.subject}\n`);
-  if (summary.content.type === 'html') {
-    process.stdout.write(`  html path       ${summary.content.path}\n`);
-    process.stdout.write(`  html bytes      ${summary.content.bytes}\n`);
-    process.stdout.write(`  html sha256     ${summary.content.sha256}\n`);
-  } else if (summary.content.type === 'template_name') {
-    process.stdout.write(`  template        ${summary.content.template_name}\n`);
+  const content = summary.content;
+  const label = CONTENT_OPTIONS.find((choice) => choice.kind === content.type)!.label.padEnd(16);
+  if (content.type === 'html') {
+    process.stdout.write(`  ${label}${content.path}\n`);
+    process.stdout.write(`  html bytes      ${content.bytes}\n`);
+    process.stdout.write(`  html sha256     ${content.sha256}\n`);
   } else {
-    process.stdout.write(`  account tmpl    ${summary.content.account_template_name}\n`);
+    process.stdout.write(`  ${label}${(content as Record<string, string>)[content.type]}\n`);
   }
   process.stdout.write(
     `  providers       ${summary.providers ? summary.providers.join(', ') : 'all Mailgun providers'}\n`
@@ -405,24 +362,12 @@ function printDryRun(summary: DryRunSummary, opts: { json?: boolean; quiet?: boo
 }
 
 function inboxRunCliError(error: InboxRunError): CliError {
-  if (error.kind === 'poll_failed') {
-    return new CliError(
-      `inbox placement test ${error.resultId} was created, but retrieving its status failed - resume with 'mailgun inbox-placement result ${error.resultId}'. Cause: ${error.detail ?? 'unknown error'}`,
-      1,
-      error.statusCode
-    );
-  }
-
-  const cause = error.detail ? ` Cause: ${error.detail}` : '';
-  const lead =
-    error.kind === 'create_missing_id'
-      ? 'the create response did not include a result id'
-      : 'the inbox placement create did not complete cleanly and a test may have been created';
-  return new CliError(
-    `${lead}, and no second create was attempted. Inspect 'mailgun inbox-placement list' manually before deciding whether to create another test.${cause}`,
-    1,
-    error.statusCode
-  );
+  return runFailureCliError(INBOX_RUN_VOCABULARY, {
+    kind: error.kind,
+    statusCode: error.statusCode,
+    createdId: error.resultId,
+    detail: error.detail
+  });
 }
 
 function registerRun(parent: Command): void {
@@ -464,7 +409,7 @@ function registerRun(parent: Command): void {
       const subject = optionalTrimmedString(opts.subject);
       if (!subject) throw new UsageError('--subject is required and must be non-empty');
 
-      const { content, htmlSource } = resolveContentSource(opts);
+      const { content, summary: contentSummary } = resolveContentSource(opts);
       const providers = parseProvidersList(opts.providers);
       const seedList = optionalTrimmedString(opts.seedList);
       const sendingIp = optionalTrimmedString(opts.sendingIp);
@@ -485,7 +430,7 @@ function registerRun(parent: Command): void {
 
       // 3) Dry run: never reads credentials, never touches the network.
       if (mode === 'dry-run') {
-        const summary = buildDryRunSummary(create, htmlSource, timeoutSeconds);
+        const summary = buildDryRunSummary(create, contentSummary, timeoutSeconds);
         if (opts.json === true) printJSON(summary);
         else printDryRun(summary, mergedOpts(command));
         return;
