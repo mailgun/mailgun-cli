@@ -75,6 +75,7 @@ test('inbox-placement result success: path and provider query', async () => {
     assert.equal(result.code, 0);
     const json = JSON.parse(result.stdout);
     assert.equal(json.placement.inbox_rate, 0.857);
+    assert.equal(json.timed_out, false);
     const req = server.requests[0]!;
     assert.equal(req.path, '/v4/inbox/results/result_123');
     assert.equal(req.query.get('provider'), 'gmail.com');
@@ -83,12 +84,19 @@ test('inbox-placement result success: path and provider query', async () => {
   }
 });
 
-test('inbox-placement result processing exits 0', async () => {
+test('inbox-placement result processing with --timeout 0 exits 0', async () => {
   const server = await startMockServer([{ method: 'GET', path: '/v4/inbox/results/', json: INBOX_RESULT_PROCESSING }]);
   try {
-    const result = await runCli(['inbox-placement', 'result', '--result', 'result_999', '--json'], { MAILGUN_API_KEY: 'k' }, server.baseUrl);
+    const result = await runCli(
+      ['inbox-placement', 'result', '--result', 'result_999', '--timeout', '0', '--json'],
+      { MAILGUN_API_KEY: 'k' },
+      server.baseUrl
+    );
     assert.equal(result.code, 0);
-    assert.equal(JSON.parse(result.stdout).status, 'processing');
+    const json = JSON.parse(result.stdout);
+    assert.equal(json.status, 'processing');
+    assert.equal(json.timed_out, true);
+    assert.ok(json.data_gaps.some((gap: { code: string }) => gap.code === 'workflow_timed_out'));
   } finally {
     await server.close();
   }

@@ -23,7 +23,7 @@ Design intent:
 | `metrics summary`        | Send     | `get_metrics_summary`            | `POST /v1/analytics/metrics`      |
 | `validate-email`         | Validate | `validate_email`                 | `GET /v4/address/validate`        |
 | `inbox-placement list`   | Optimize | CLI discovery helper             | `GET /v4/inbox/results`           |
-| `inbox-placement result` | Optimize | `get_inbox_placement_result`     | `GET /v4/inbox/results/{id}`      |
+| `inbox-placement result` | Optimize | `get_inbox_placement_result`     | `GET /v4/inbox/results/{id}` + poll |
 | `inbox-placement run`    | Optimize | CLI write workflow               | `POST /v4/inbox/tests` + reads    |
 | `preview list`           | Inspect  | CLI discovery helper             | `GET /v2/preview/tests`           |
 | `preview clients`        | Inspect  | `list_preview_clients`           | `GET /v1/preview/tests/clients`   |
@@ -171,13 +171,15 @@ Important invariants:
 ### `mailgun inbox-placement result`
 
 - CLI equivalent of MCP `get_inbox_placement_result`.
-- Uses `GET /v4/inbox/results/{result}`.
+- Polls `GET /v4/inbox/results/{result}` until status leaves `processing` or the
+  timeout is reached (default 120 seconds, matching `preview result`).
+- `--timeout 0` fetches once and returns the current state.
 - Normalizes aggregate placement and provider placement.
 - Supports the `--provider` API query filter.
 
 ### `mailgun inbox-placement run`
 
-- Write workflow for Optimize inbox placement create + poll.
+- Write workflow for Optimize inbox placement create + poll, matching `preview run`.
 - Uses `POST /v4/inbox/tests`, then polls `GET /v4/inbox/results/{result_id}`.
 - Requires exactly one of `--dry-run` or `--yes`; never prompts.
 - Requires `--from`, `--subject`, and exactly one content source among `--html`,
@@ -185,6 +187,7 @@ Important invariants:
 - HTML is file-only; dry-run summaries never echo HTML content.
 - Sends at most one create POST and never recreates after timeout or uncertain
   create outcomes.
+- Default poll deadline is 300 seconds; `--timeout 0` returns after one result fetch.
 - Optional `--providers`, `--seed-list`, `--sending-ip`, `--sending-ip-pool-id`,
   and `--max-seeds-per-provider` map to the documented create fields.
 

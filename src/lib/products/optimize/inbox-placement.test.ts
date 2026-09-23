@@ -123,6 +123,7 @@ test('pollInboxPlacementResult stops when status leaves processing', async () =>
 
 test('runInboxPlacementTest creates once then returns a complete summary', async () => {
   const methods: string[] = [];
+  let createdId: string | undefined;
   const output = await runInboxPlacementTest({
     apiKey: 'k',
     baseUrl: 'http://example.test',
@@ -132,6 +133,9 @@ test('runInboxPlacementTest creates once then returns a complete summary', async
       content: { kind: 'html', html: '<p>hi</p>' }
     },
     timeoutSeconds: 30,
+    onCreated: (resultId) => {
+      createdId = resultId;
+    },
     deps: {
       request: async (method, path, body) => {
         methods.push(`${method} ${path}`);
@@ -147,6 +151,7 @@ test('runInboxPlacementTest creates once then returns a complete summary', async
     }
   });
   assert.deepEqual(methods, ['POST /v4/inbox/tests', 'GET /v4/inbox/results/result_123']);
+  assert.equal(createdId, 'result_123');
   assert.equal(output.result_id, 'result_123');
   assert.equal(output.timed_out, false);
   assert.equal(output.mailing_list, 'ibp-seed@example.com');

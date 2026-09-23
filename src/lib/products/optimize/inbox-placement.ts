@@ -143,21 +143,6 @@ export interface InboxResultOutput {
   data_gaps: DataGap[];
 }
 
-export async function getInboxPlacementResult(params: {
-  apiKey: string;
-  baseUrl: string;
-  resultId: string;
-  provider?: string;
-}): Promise<InboxResultOutput> {
-  const url = buildMailgunUrl(
-    `/v4/inbox/results/${encodeURIComponent(params.resultId)}`,
-    { provider: params.provider },
-    params.baseUrl
-  );
-  const response = await mailgunRequest<unknown>(url, params.apiKey, 'inbox placement result');
-  return normalizeInboxResult(params.resultId, response);
-}
-
 function counts(stats: Record<string, unknown>): { inbox: number; spam: number; missing: number; pending: number } {
   return {
     inbox: firstNumber(stats.inbox) ?? 0,
@@ -284,8 +269,11 @@ export class InboxRunError extends Error {
   }
 }
 
-export interface InboxRunOutput extends InboxResultOutput {
+export interface InboxPollOutput extends InboxResultOutput {
   timed_out: boolean;
+}
+
+export interface InboxRunOutput extends InboxPollOutput {
   mailing_list: string | null;
 }
 
@@ -322,6 +310,7 @@ export function extractCreatedMailingList(created: unknown): string | null {
 const PRODUCT = 'Optimize' as const;
 const POLL_INTERVAL_MS = 5000;
 const RUN_DEFAULT_TIMEOUT_SECONDS = 300;
+const RESULT_DEFAULT_TIMEOUT_SECONDS = 120;
 const MAX_TIMEOUT_SECONDS = 600;
 
 export function resolveInboxTimeoutSeconds(
@@ -356,10 +345,13 @@ export interface InboxPollResult {
 // Poll GET /v4/inbox/results/{id} until status leaves "processing" or the
 // deadline passes. timeoutMs=0 means fetch once and return.
 export async function pollInboxPlacementResult(
-  params: { resultId: string; timeoutMs: number; intervalMs?: number },
+  params: { resultId: string; timeoutMs: number; intervalMs?: number; provider?: string },
   deps: InboxPollDeps
 ): Promise<InboxPollResult> {
-  const path = `/v4/inbox/results/${encodeURIComponent(params.resultId)}`;
+  const encodedId = encodeURIComponent(params.resultId);
+  const path = params.provider
+    ? `/v4/inbox/results/${encodedId}?provider=${encodeURIComponent(params.provider)}`
+    : `/v4/inbox/results/${encodedId}`;
   const interval = params.intervalMs ?? POLL_INTERVAL_MS;
   const deadline = deps.now() + params.timeoutMs;
 
@@ -380,12 +372,7 @@ export async function pollInboxPlacementResult(
   return { response, timedOut };
 }
 
-function buildInboxRunOutput(
-  resultId: string,
-  response: unknown,
-  timedOut: boolean,
-  mailingList: string | null
-): InboxRunOutput {
+function buildInboxPollOutput(resultId: string, response: unknown, timedOut: boolean): InboxPollOutput {
   const result = normalizeInboxResult(resultId, response);
   const dataGaps = [...result.data_gaps];
   if (timedOut) {
@@ -399,7 +386,6 @@ function buildInboxRunOutput(
   return {
     ...result,
     timed_out: timedOut,
-    mailing_list: mailingList,
     data_gaps: dataGaps
   };
 }
@@ -416,6 +402,23 @@ function liveDeps(apiKey: string, baseUrl: string): InboxPollDeps {
   };
 }
 
+export async function getInboxPlacementResult(params: {
+  apiKey: string;
+  baseUrl: string;
+  resultId: string;
+  provider?: string;
+  timeoutSeconds?: number;
+  deps?: InboxPollDeps;
+}): Promise<InboxPollOutput> {
+  const deps = params.deps ?? liveDeps(params.apiKey, params.baseUrl);
+  const timeoutMs = resolveInboxTimeoutSeconds(params.timeoutSeconds, RESULT_DEFAULT_TIMEOUT_SECONDS) * 1000;
+  const poll = await pollInboxPlacementResult(
+    { resultId: params.resultId, timeoutMs, provider: params.provider },
+    deps
+  );
+  return buildInboxPollOutput(params.resultId, poll.response, poll.timedOut);
+}
+
 // Create ONE inbox placement test, then poll and summarize. The create is issued
 // once and never retried (the API is not documented as idempotent). Failures
 // carry structured recovery context for the command layer.
@@ -425,6 +428,7 @@ export async function runInboxPlacementTest(params: {
   create: InboxCreateInput;
   timeoutSeconds?: number;
   deps?: InboxPollDeps;
+  onCreated?: (resultId: string) => void;
 }): Promise<InboxRunOutput> {
   const deps = params.deps ?? liveDeps(params.apiKey, params.baseUrl);
   const body = buildInboxCreateRequest(params.create);
@@ -453,6 +457,7 @@ export async function runInboxPlacementTest(params: {
     throw new InboxRunError({ kind: 'create_missing_id' });
   }
   const mailingList = extractCreatedMailingList(created);
+  params.onCreated?.(resultId);
   const timeoutMs = resolveInboxTimeoutSeconds(params.timeoutSeconds) * 1000;
 
   let poll: InboxPollResult;
@@ -467,7 +472,14 @@ export async function runInboxPlacementTest(params: {
     });
   }
 
-  return buildInboxRunOutput(resultId, poll.response, poll.timedOut, mailingList);
+  return {
+    ...buildInboxPollOutput(resultId, poll.response, poll.timedOut),
+    mailing_list: mailingList
+  };
 }
 
-export { RUN_DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS as INBOX_MAX_TIMEOUT_SECONDS };
+export {
+  RUN_DEFAULT_TIMEOUT_SECONDS,
+  RESULT_DEFAULT_TIMEOUT_SECONDS,
+  MAX_TIMEOUT_SECONDS as INBOX_MAX_TIMEOUT_SECONDS
+};

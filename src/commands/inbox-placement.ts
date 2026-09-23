@@ -17,7 +17,7 @@ import {
   type InboxCreateInput,
   type InboxContentSource,
   type InboxListOutput,
-  type InboxResultOutput,
+  type InboxPollOutput,
   type InboxRunOutput
 } from '../lib/products/optimize/inbox-placement.js';
 import { addApiOptions } from './shared-options.js';
@@ -119,13 +119,24 @@ export const INBOX_PLACEMENT_DESCRIPTORS: CommandDescriptor[] = [
   {
     command: 'inbox-placement result',
     mode: 'read',
-    description: 'Retrieve and summarize an inbox placement result',
+    description: 'Poll and summarize an inbox placement result',
     product: 'Optimize',
     mcpTool: 'get_inbox_placement_result',
-    flags: ['--result', '--provider', '--region', '--json', '--quiet'],
-    outputFields: ['result_id', 'status', 'subject', 'sender', 'placement', 'providers', 'spamassassin', 'data_gaps'],
+    flags: ['--result', '--provider', '--timeout', '--region', '--json', '--quiet'],
+    outputFields: [
+      'result_id',
+      'status',
+      'timed_out',
+      'subject',
+      'sender',
+      'placement',
+      'providers',
+      'spamassassin',
+      'data_gaps'
+    ],
     examples: [
       'mailgun inbox-placement result --result result_123 --json',
+      'mailgun inbox-placement result result_123 --timeout 0 --json',
       'mailgun inbox-placement result --result result_123 --provider gmail.com --json'
     ]
   },
@@ -167,7 +178,7 @@ export const INBOX_PLACEMENT_DESCRIPTORS: CommandDescriptor[] = [
     examples: [
       'mailgun inbox-placement run --from news@example.com --subject "June campaign" --html ./email.html --dry-run',
       'mailgun inbox-placement run --from news@example.com --subject "June campaign" --html ./email.html --yes --json',
-      'mailgun inbox-placement run --from news@example.com --subject "Promo" --template-name welcome --providers gmail.com --yes'
+      'mailgun inbox-placement run --from news@example.com --subject "Promo" --html ./email.html --timeout 0 --yes --json'
     ]
   }
 ];
@@ -188,12 +199,12 @@ function printList(output: InboxListOutput, opts: { json?: boolean; quiet?: bool
 }
 
 function printResult(
-  output: InboxResultOutput | InboxRunOutput,
+  output: InboxPollOutput | InboxRunOutput,
   opts: { json?: boolean; quiet?: boolean }
 ): void {
   const chalk = chalkFor(opts);
   if (opts.quiet !== true) process.stdout.write(`${chalk.bold(`Inbox placement - ${output.result_id}`)}\n\n`);
-  const timedOut = 'timed_out' in output && output.timed_out === true;
+  const timedOut = output.timed_out === true;
   const p = output.placement;
   process.stdout.write(`  status      ${output.status ?? '-'}${timedOut ? ' (timed out)' : ''}\n`);
   process.stdout.write(`  subject     ${output.subject ?? '-'}\n`);
@@ -257,13 +268,14 @@ function registerList(parent: Command): void {
 function registerResult(parent: Command): void {
   const result = parent
     .command('result')
-    .description('Retrieve and summarize an inbox placement result')
+    .description('Poll and summarize an inbox placement result')
     .argument('[result_id]', 'inbox placement result ID (alternative to --result)')
     .option('--result <result_id>', 'inbox placement result ID (canonical)')
     .option('--provider <provider>', 'filter to a single provider')
+    .option('--timeout <seconds>', 'max seconds to poll for the result to settle (0-600, default 120)')
     .addHelpText(
       'after',
-      '\nExamples:\n  mailgun inbox-placement result result_123 --json\n  mailgun inbox-placement result --result result_123 --json\n'
+      '\nExamples:\n  mailgun inbox-placement result result_123 --json\n  mailgun inbox-placement result --result result_123 --json\n  mailgun inbox-placement result result_123 --timeout 0 --json\n'
     );
 
   addApiOptions(result);
@@ -278,14 +290,16 @@ function registerResult(parent: Command): void {
         flagName: '--result',
         missingMessage: "a result id is required (positional or --result; get one from 'mailgun inbox-placement list')"
       });
+      const timeoutSeconds = parseTimeoutSeconds(opts.timeout) ?? 120;
       const runtime = resolveRuntime(command, { requireApiKey: true });
 
-      spinner.start('Fetching inbox placement result...');
+      spinner.start('Polling inbox placement result...');
       const output = await getInboxPlacementResult({
         apiKey: runtime.apiKey!,
         baseUrl: runtime.baseUrl,
         resultId,
-        provider: opts.provider as string | undefined
+        provider: opts.provider as string | undefined,
+        timeoutSeconds
       });
       spinner.stop();
 
@@ -486,7 +500,8 @@ function registerRun(parent: Command): void {
           apiKey: runtime.apiKey!,
           baseUrl: runtime.baseUrl,
           create,
-          timeoutSeconds
+          timeoutSeconds,
+          onCreated: () => spinner.text('Polling inbox placement result...')
         });
       } catch (error) {
         if (error instanceof InboxRunError) throw inboxRunCliError(error);
